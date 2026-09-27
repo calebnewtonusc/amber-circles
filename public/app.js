@@ -229,8 +229,8 @@ function landing() {
         <section class="hero">
           <div>
             <p class="kicker">A cloud for small software</p>
-            <h1>Small software, shared with <em>your circles.</em></h1>
-            <p class="lede">Ask Claude for the tool your club, team or trip needs. Amber hosts it and shares it with exactly the people it is for, the way you share a Google Doc. No deploys, no logins to set up.</p>
+            <h1>Ask Claude for a tool. Share it <em>like a Google Doc.</em></h1>
+            <p class="lede">The tool your club, team or trip needs, built by Claude and hosted by Amber. Only the people in your circle can open it, each from their own link. No deploys, no logins to set up.</p>
             <form id="start">
               <label class="skip" for="start-name">Your name</label>
               <input class="input" id="start-name" name="name" placeholder="Your name" autocomplete="name" required maxlength="80">
