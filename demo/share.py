@@ -2,7 +2,7 @@ import json, time, sys
 sys.path.insert(0, '/private/tmp/amber-demo')
 from lib import *
 from playwright.sync_api import sync_playwright
-slug = "prayer-list-d37fb3"; tok = json.load(open('/private/tmp/amber-demo/tokens.json'))
+slug = "prayer-list-20616c"; tok = json.load(open('/private/tmp/amber-demo/tokens.json'))
 marks = []
 with sync_playwright() as p:
     b = p.chromium.launch()
@@ -14,14 +14,17 @@ with sync_playwright() as p:
     caption(d, "Each person gets their own link by text. No accounts, no passwords.")
     r.goto(BASE + f"/t/{slug}?m={tok['Ruth Miller']}"); r.wait_for_timeout(2500); log(marks, 'ruth_open')
     frame = r.frames[1]
-    frame.wait_for_selector('#newPrayer', timeout=20000)
-    caption(d, "Ruth opens hers. The tool already knows who she is.")
-    r.wait_for_timeout(1500)
-    frame.click('#newPrayer'); frame.type('#newPrayer', "Healing for Pastor Dan's knee after surgery.", delay=45)
-    r.wait_for_timeout(400); frame.click('#addBtn'); log(marks, 'ruth_added')
+    frame.wait_for_selector('#text', timeout=20000)
+    caption(d, "Ruth opens hers. It says who shared it, and there is nothing to sign up for.")
+    r.wait_for_timeout(2200)
+    if r.is_visible('#welcome-ok'): r.click('#welcome-ok')
+    r.wait_for_timeout(600)
+    frame.click('#text'); frame.type('#text', "Healing for Pastor Dan's knee after surgery.", delay=45)
+    r.wait_for_timeout(400); frame.click('#add'); log(marks, 'ruth_added')
     caption(d, "She adds a prayer from her phone.")
-    d.wait_for_timeout(1500)
-    d.frames[1].evaluate("[...document.querySelectorAll('h2,h3')].find(h => /Praying/i.test(h.textContent))?.scrollIntoView({behavior: 'smooth', block: 'start'})")
+    d.frames[1].wait_for_selector("text=Pastor Dan", timeout=12000)
+    d.wait_for_timeout(300)
+    d.frames[1].evaluate("[...document.querySelectorAll('*')].filter(e => e.children.length === 0 && /Pastor Dan/.test(e.textContent))[0]?.scrollIntoView({behavior: 'smooth', block: 'center'})")
     d.wait_for_timeout(4500)
     caption(d, "It shows up for the whole class, right away.")
     d.wait_for_timeout(3000)
