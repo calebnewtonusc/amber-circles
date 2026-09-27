@@ -1,0 +1,17 @@
+{
+  "name": "amber-circles",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "A cloud for small software: tools an agent builds, shared with an Amber circle like a Google Doc.",
+  "engines": { "node": ">=20" },
+  "scripts": {
+    "start": "node server.js",
+    "test": "node --test test/*.test.js"
+  },
+  "dependencies": {
+    "@hono/node-server": "^1.13.7",
+    "hono": "^4.6.14",
+    "pg": "^8.13.1"
+  }
+}
