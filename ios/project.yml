@@ -10,7 +10,7 @@ settings:
     CODE_SIGN_STYLE: Automatic
     SWIFT_VERSION: "5.0"
     MARKETING_VERSION: "2.0"
-    CURRENT_PROJECT_VERSION: "38"
+    CURRENT_PROJECT_VERSION: "39"
     TARGETED_DEVICE_FAMILY: "1"
 targets:
   Amber:
@@ -25,13 +25,17 @@ targets:
       path: App/Info.plist
       properties:
         CFBundleDisplayName: Amber
+        CFBundleShortVersionString: $(MARKETING_VERSION)
+        CFBundleVersion: $(CURRENT_PROJECT_VERSION)
+        NSMicrophoneUsageDescription: Amber listens while you hold the talk button, so you can say what to change instead of typing it.
+        NSSpeechRecognitionUsageDescription: Amber turns what you say into words on your phone, so you can talk to what your chat made.
         UILaunchScreen: {}
         UIRequiresFullScreen: true
         ITSAppUsesNonExemptEncryption: false
         UIAppFonts:
-          - AtkinsonHyperlegibleNext-Regular.ttf
-          - AtkinsonHyperlegibleNext-Bold.ttf
-          - AtkinsonHyperlegibleNext-ExtraBold.ttf
+          - Geist-Regular.ttf
+          - Geist-Medium.ttf
+          - Geist-SemiBold.ttf
         UISupportedInterfaceOrientations: [UIInterfaceOrientationPortrait]
     settings:
       base:
@@ -48,11 +52,13 @@ targets:
       path: Messages/Info.plist
       properties:
         CFBundleDisplayName: Amber
+        CFBundleShortVersionString: $(MARKETING_VERSION)
+        CFBundleVersion: $(CURRENT_PROJECT_VERSION)
         ITSAppUsesNonExemptEncryption: false
         UIAppFonts:
-          - AtkinsonHyperlegibleNext-Regular.ttf
-          - AtkinsonHyperlegibleNext-Bold.ttf
-          - AtkinsonHyperlegibleNext-ExtraBold.ttf
+          - Geist-Regular.ttf
+          - Geist-Medium.ttf
+          - Geist-SemiBold.ttf
         NSMicrophoneUsageDescription: Amber listens while you hold the talk button, so you can say what to change instead of typing it.
         NSSpeechRecognitionUsageDescription: Amber turns what you say into words on your phone, so you can talk to what your chat made.
         NSExtension:

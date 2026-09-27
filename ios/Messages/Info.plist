@@ -15,9 +15,9 @@
 	<key>CFBundleName</key>
 	<string>$(PRODUCT_NAME)</string>
 	<key>CFBundleShortVersionString</key>
-	<string>1.0</string>
+	<string>$(MARKETING_VERSION)</string>
 	<key>CFBundleVersion</key>
-	<string>1</string>
+	<string>$(CURRENT_PROJECT_VERSION)</string>
 	<key>ITSAppUsesNonExemptEncryption</key>
 	<false/>
 	<key>NSExtension</key>
@@ -33,9 +33,9 @@
 	<string>Amber turns what you say into words on your phone, so you can talk to what your chat made.</string>
 	<key>UIAppFonts</key>
 	<array>
-		<string>AtkinsonHyperlegibleNext-Regular.ttf</string>
-		<string>AtkinsonHyperlegibleNext-Bold.ttf</string>
-		<string>AtkinsonHyperlegibleNext-ExtraBold.ttf</string>
+		<string>Geist-Regular.ttf</string>
+		<string>Geist-Medium.ttf</string>
+		<string>Geist-SemiBold.ttf</string>
 	</array>
 </dict>
 </plist>

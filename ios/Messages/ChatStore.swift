@@ -169,35 +169,56 @@ final class ChatStore: ObservableObject {
         }
     }
 
-    /// Loads the kept conversation for a tool, so reopening it picks up where
-    /// the chat left off.
+    /// Loads the chat's conversation with Amber, all of it on the home screen
+    /// ("" key) or only what was said about one tool.
     func loadTalk(_ slug: String) async {
         guard let session else { return }
         struct Row: Decodable { let role: String; let text: String; let name: String? }
         struct Rows: Decodable { let turns: [Row] }
-        guard let rows: Rows = try? await API.call("api/tools/\(slug)/talk", chat: session.token) else { return }
-        talk[slug] = rows.turns.map { row in
-            Turn(text: row.role != "person" || row.name == nil || row.name == session.name ? row.text : "\(row.name!): \(row.text)",
-                 mine: row.role == "person")
+        let path = slug.isEmpty ? "api/chats/\(session.chat)/agent" : "api/chats/\(session.chat)/agent?slug=\(slug)"
+        guard let url = URL(string: path, relativeTo: API.base) else { return }
+        var request = URLRequest(url: url)
+        request.setValue(session.token, forHTTPHeaderField: "x-amber-chat")
+        guard let (data, _) = try? await URLSession.shared.data(for: request),
+              let rows = try? JSONDecoder().decode(Rows.self, from: data) else { return }
+        talk[slug] = rows.turns.compactMap { row in
+            switch row.role {
+            case "person": return Turn(text: row.name == nil || row.name == session.name ? row.text : "\(row.name!): \(row.text)", mine: true)
+            case "amber": return Turn(text: row.text, mine: false)
+            default: return nil
+            }
         }
     }
 
-    /// Say something to a tool. The fast words never reach a model, the way
+    /// Say something to the chat's agent, on the home screen (slug "") or
+    /// about one tool. The fast words never reach a model, the way
     /// Chewbacca's music does (docs/VOICE-DESIGN.md): keep it, put it back,
-    /// open it. Everything else is answered, built, or saved as a comment.
+    /// open it.
     func say(_ slug: String, _ text: String, open: (URL) -> Void = { _ in }) async {
         let words = text.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard let session, !words.isEmpty else { return }
+        guard !words.isEmpty else { return }
+        error = nil
         talk[slug, default: []].append(Turn(text: words, mine: true))
+        do {
+            if session == nil {
+                let started: Joined = try await API.call(
+                    "api/chats", method: "POST", body: ["name": name, "participant": participant])
+                store(Session(chat: started.chat, token: started.token, invite: started.invite ?? "", name: name))
+            }
+        } catch {
+            self.error = error.localizedDescription
+            return
+        }
+        guard let session else { return }
         let lower = words.lowercased()
-        let hasDraft = tool(slug)?.has_draft == true
+        let hasDraft = !slug.isEmpty && tool(slug)?.has_draft == true
         if hasDraft, lower.range(of: #"^(keep (it|this|that)|looks good|ship it|yes keep)"#, options: .regularExpression) != nil {
             await keep(slug); reply(slug, "Kept. Everyone in the chat has it now."); return
         }
         if hasDraft, lower.range(of: #"^(put it back|undo|never ?mind|throw (it|that) (out|away))"#, options: .regularExpression) != nil {
             await discard(slug); reply(slug, "Put back. Nothing changed."); return
         }
-        if lower.range(of: #"^(open|show me)( it| the (draft|app|site))?$"#, options: .regularExpression) != nil,
+        if !slug.isEmpty, lower.range(of: #"^(open|show me)( it| the (draft|app|site))?$"#, options: .regularExpression) != nil,
            let url = openURL(slug, draft: hasDraft) {
             reply(slug, "Opening it in Safari. Come back and tell me what you think.")
             open(url); return
@@ -205,27 +226,36 @@ final class ChatStore: ObservableObject {
         // Chewbacca's filler rule: nothing said for two seconds, say something
         // shaped to the request, not "um".
         var answered = false
-        let title = tool(slug)?.title ?? "it"
+        let subject = slug.isEmpty ? "that" : (tool(slug)?.title ?? "it")
         let filler = Task { [weak self] in
             try? await Task.sleep(for: .seconds(2))
             if !answered, let self, let token = self.session?.token {
-                await self.speaker.say("Let me look at \(title).", token: token)
+                await self.speaker.say("Let me look at \(subject).", token: token)
             }
         }
         do {
-            struct Reply: Decodable { let kind: String; let reply: String; let request: String? }
-            let reply: Reply = try await API.call(
-                "api/tools/\(slug)/talk", method: "POST", body: ["text": words], chat: session.token)
+            struct Action: Decodable { let type: String; let slug: String?; let request: String? }
+            struct Reply: Decodable { let reply: String; let actions: [Action] }
+            var body: [String: Any] = ["text": words]
+            if !slug.isEmpty { body["slug"] = slug }
+            let result: Reply = try await API.call(
+                "api/chats/\(session.chat)/agent", method: "POST", body: body, chat: session.token)
             answered = true
             filler.cancel()
-            self.reply(slug, reply.reply)
-            guard reply.kind == "change" else { return }
-            if changing[slug] != nil {
-                self.reply(slug, "I'm still making the last change. Tell me again when it's ready.")
-                return
+            self.reply(slug, result.reply)
+            for action in result.actions {
+                switch action.type {
+                case "change":
+                    if let target = action.slug, let request = action.request, changing[target] == nil {
+                        Task { await self.changeInBackground(target, request, tell: slug) }
+                    }
+                case "make":
+                    if let request = action.request { Task { await self.makeInBackground(request, tell: slug) } }
+                case "open":
+                    if let target = action.slug, let url = openURL(target, draft: tool(target)?.has_draft == true) { open(url) }
+                default: break
+                }
             }
-            let request = reply.request ?? words
-            Task { await self.changeInBackground(slug, request) }
         } catch {
             answered = true
             filler.cancel()
@@ -233,9 +263,26 @@ final class ChatStore: ObservableObject {
         }
     }
 
+    /// A new tool, built while the conversation keeps going. When it is ready
+    /// Amber says so and puts the bubble in the message field to send.
+    private func makeInBackground(_ request: String, tell key: String) async {
+        guard let session else { return }
+        changing["__new"] = Date()
+        defer { changing["__new"] = nil }
+        do {
+            let result = try await API.build(request: request, chat: session.chat, slug: nil, token: session.token) { _, _ in }
+            await refresh()
+            let title = tool(result.slug)?.title ?? "it"
+            reply(key, "\(title) is ready. I put it in the message box so you can send it to the chat.")
+            if let made = tool(result.slug) { send(made, note: "I made this for us. Tap to open it.") }
+        } catch {
+            reply(key, "That didn't get built. \(error.localizedDescription)")
+        }
+    }
+
     /// Builds a change without taking over the screen, then says when it is
     /// ready. A failure is always said out loud, never left silent.
-    private func changeInBackground(_ slug: String, _ request: String) async {
+    private func changeInBackground(_ slug: String, _ request: String, tell key: String? = nil) async {
         guard let session else { return }
         changing[slug] = Date()
         defer { changing[slug] = nil }
@@ -244,9 +291,9 @@ final class ChatStore: ObservableObject {
             await refresh()
             struct Summary: Decodable { let text: String }
             let summary: Summary? = try? await API.call("api/tools/\(slug)/draft-summary", chat: session.token)
-            reply(slug, "It's updated. " + (summary?.text ?? "") + " Tap the link at the top to try it in Safari.")
+            reply(key ?? slug, "It's updated. " + (summary?.text ?? "") + " Tap the link at the top to try it in Safari.")
         } catch {
-            reply(slug, "That change didn't go through. \(error.localizedDescription)")
+            reply(key ?? slug, "That change didn't go through. \(error.localizedDescription)")
         }
     }
 

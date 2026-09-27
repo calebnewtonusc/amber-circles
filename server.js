@@ -15,6 +15,7 @@ import { serveStatic } from "@hono/node-server/serve-static";
 import pg from "pg";
 import { streamSSE } from "hono/streaming";
 import { build, describeChange, explain, talk, titleFrom } from "./builder.js";
+import { converse } from "./agent.js";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const PORT = Number(process.env.PORT || 8787);
@@ -1387,6 +1388,132 @@ app.get("/api/chats/:id", async (c) => {
   return c.json({ chat: circleId, me: owner.chatMember, people, tools });
 });
 
+// The chat's agent: one conversation, with the whole chat's tools,
+// transcripts and memories behind it (agent.js).
+function chatData(circleId, owner) {
+  return {
+    tools: async () =>
+      (
+        await pool.query(
+          `select t.slug, t.title, t.made_by, t.version, (t.draft_html is not null) as has_draft,
+                  (select count(*) from records r where r.tool_id = t.id)::int as entries,
+                  (select count(*) from tool_notes n where n.tool_id = t.id)::int as notes
+             from tools t where t.circle_id = $1 order by t.updated_at desc`,
+          [circleId],
+        )
+      ).rows,
+    people: async () => (await pool.query("select id, name from members where circle_id = $1 order by created_at", [circleId])).rows,
+    memories: async () =>
+      (await pool.query("select name, description, modality from chat_memories where circle_id = $1 order by updated_at desc limit 200", [circleId])).rows,
+    recall: async (name) =>
+      (
+        await pool.query(
+          `select m.name, m.description, m.body, m.modality, m.updated_at, p.name as by from chat_memories m
+             left join members p on p.id = m.member_id where m.circle_id = $1 and m.name = $2`,
+          [circleId, name],
+        )
+      ).rows[0],
+    remember: async ({ name, description, body, modality, by }) =>
+      pool.query(
+        `insert into chat_memories (id, circle_id, name, description, body, modality, member_id)
+           values ($1, $2, $3, $4, $5, $6, $7)
+         on conflict (circle_id, name) do update set description = excluded.description, body = excluded.body,
+           modality = excluded.modality, member_id = excluded.member_id, updated_at = now()`,
+        [newId("mem"), circleId, String(name).slice(0, 80), String(description).slice(0, 300), String(body).slice(0, 4000),
+         ["wish", "decided", "done", "declined", "fact"].includes(modality) ? modality : "fact", by || null],
+      ),
+    readTool: async (slug) => {
+      const {
+        rows: [tool],
+      } = await pool.query("select id, title, html, version, draft_request from tools where circle_id = $1 and slug = $2", [circleId, slug]);
+      if (!tool) return { error: `No tool ${slug} in this chat.` };
+      const [{ rows: versions }, { rows: notes }] = await Promise.all([
+        pool.query("select version, request, created_at from tool_versions where tool_id = $1 order by version", [tool.id]),
+        pool.query("select n.text, m.name from tool_notes n left join members m on m.id = n.member_id where n.tool_id = $1 order by n.created_at", [tool.id]),
+      ]);
+      return { title: tool.title, live_version: tool.version, waiting_change: tool.draft_request, versions, comments: notes, code: tool.html.slice(0, 40000) };
+    },
+    conversations: async (slug, limit) =>
+      (
+        await pool.query(
+          `select * from (select t.role, t.text, t.tool_slug, t.created_at, m.name from chat_turns t
+             left join members m on m.id = t.member_id where t.circle_id = $1 and ($2::text is null or t.tool_slug = $2)
+            order by t.created_at desc limit $3) recent order by created_at`,
+          [circleId, slug || null, limit],
+        )
+      ).rows,
+    recentTurns: async (limit) =>
+      (
+        await pool.query(
+          `select * from (select t.role, t.text, t.created_at, m.name from chat_turns t
+             left join members m on m.id = t.member_id where t.circle_id = $1
+            order by t.created_at desc limit $2) recent order by created_at`,
+          [circleId, limit],
+        )
+      ).rows,
+    comment: async (slug, text, memberId) => {
+      const {
+        rows: [tool],
+      } = await pool.query("select id from tools where circle_id = $1 and slug = $2", [circleId, slug]);
+      if (tool) await pool.query("insert into tool_notes (id, tool_id, member_id, text) values ($1, $2, $3, $4)", [newId("note"), tool.id, memberId, String(text).slice(0, 1000)]);
+    },
+  };
+}
+
+app.post("/api/chats/:id/agent", async (c) => {
+  const owner = await requireOwner(c);
+  if (owner.chatMember?.circleId !== c.req.param("id")) throw new HttpError(403, "You are not in this chat.");
+  const body = await c.req.json().catch(() => ({}));
+  const text = requireText(body.text, "what you said", 2000);
+  const circleId = owner.chatMember.circleId;
+  const {
+    rows: [chat],
+  } = await pool.query("select name from circles where id = $1", [circleId]);
+  const result = await converse({
+    db: chatData(circleId, owner),
+    chat,
+    speaker: owner.chatMember,
+    focusSlug: body.slug || null,
+    text,
+  });
+  await pool.query(
+    `insert into chat_turns (id, circle_id, tool_slug, member_id, role, text) values ($1, $2, $3, $4, 'person', $5), ($6, $2, $3, null, 'amber', $7)`,
+    [newId("turn"), circleId, body.slug || null, owner.chatMember.id, text, newId("turn"), result.reply],
+  );
+  // What the agent set in motion, written where it will read it next turn,
+  // so a question from someone else never restarts a change already running.
+  for (const action of result.actions) {
+    const line =
+      action.type === "change" ? `Started a change to ${action.slug} for ${owner.chatMember.name}: ${action.request}`
+      : action.type === "make" ? `Started building a new tool for ${owner.chatMember.name}: ${action.request}`
+      : `Opened ${action.slug} for ${owner.chatMember.name}`;
+    await pool.query("insert into chat_turns (id, circle_id, tool_slug, member_id, role, text) values ($1, $2, $3, $4, 'event', $5)", [
+      newId("turn"), circleId, action.slug || body.slug || null, owner.chatMember.id, line,
+    ]);
+  }
+  return c.json(result);
+});
+
+// The chat's conversation with Amber, optionally only about one tool.
+app.get("/api/chats/:id/agent", async (c) => {
+  const owner = await requireOwner(c);
+  if (owner.chatMember?.circleId !== c.req.param("id")) throw new HttpError(403, "You are not in this chat.");
+  const turns = await chatData(owner.chatMember.circleId, owner).conversations(c.req.query("slug") || null, 60);
+  return c.json({ turns });
+});
+
+// What the agent remembers about this chat, for the person to see and trust.
+app.get("/api/chats/:id/memories", async (c) => {
+  const owner = await requireOwner(c);
+  if (owner.chatMember?.circleId !== c.req.param("id")) throw new HttpError(403, "You are not in this chat.");
+  const { rows } = await pool.query(
+    `select m.name, m.description, m.body, m.modality, m.updated_at, p.name as by from chat_memories m
+       left join members p on p.id = m.member_id where m.circle_id = $1 order by m.updated_at desc`,
+    [owner.chatMember.circleId],
+  );
+  return c.json({ memories: rows });
+});
+
 // Only the person who started a chat can remove it, with everything in it.
 app.delete("/api/chats/:id", async (c) => {
   const owner = await requireOwner(c);
@@ -1402,8 +1529,11 @@ app.delete("/api/chats/:id", async (c) => {
 // service). Here that is the difference between a wish, a kept change and one
 // that was tried and put back, so those land in the conversation as events.
 async function logEvent(owner, slug, text) {
-  const { rows } = await pool.query("select id from tools where owner_id = $1 and slug = $2", [owner.id, slug]);
+  const { rows } = await pool.query("select id, circle_id from tools where owner_id = $1 and slug = $2", [owner.id, slug]);
   if (!rows[0]) return;
+  await pool.query("insert into chat_turns (id, circle_id, tool_slug, member_id, role, text) values ($1, $2, $3, $4, 'event', $5)", [
+    newId("turn"), rows[0].circle_id, slug, owner.chatMember?.id || null, `${text}${owner.chatMember ? `, by ${owner.chatMember.name}` : ""}`,
+  ]);
   await pool.query(
     "insert into tool_talk (id, tool_id, member_id, role, text) values ($1, $2, $3, 'event', $4)",
     [newId("turn"), rows[0].id, owner.chatMember?.id || null, text.slice(0, 1000)],

@@ -48,27 +48,25 @@ final class MessagesViewController: MSMessagesAppViewController {
 enum BubbleArt {
     @MainActor
     static func render(title: String, by: String) -> UIImage? {
-        let card = VStack(alignment: .leading, spacing: 14) {
+        let card = VStack(alignment: .leading, spacing: 16) {
             HStack(spacing: 10) {
-                Circle().fill(Amber.amber).overlay(Circle().strokeBorder(Amber.ink, lineWidth: 3))
-                    .frame(width: 28, height: 28)
-                Text("Let's build together").font(Amber.font(24, .bold)).foregroundStyle(Amber.ink)
+                Circle().fill(Amber.amber).frame(width: 18, height: 18)
+                Text("Let's build together").font(Amber.font(26, .bold)).foregroundStyle(Amber.muted)
             }
             Spacer(minLength: 0)
-            Text(title).font(Amber.font(58, .heavy)).foregroundStyle(Amber.ink)
+            Text(title).font(Amber.font(56, .heavy)).tracking(-1.6).foregroundStyle(Amber.ink)
                 .lineLimit(2).minimumScaleFactor(0.6)
-            Text("By \(by). Tap to open it together.").font(Amber.font(24)).foregroundStyle(Amber.body)
             HStack {
-                Text("Open").font(Amber.font(26, .bold)).foregroundStyle(Amber.ink)
-                    .padding(.horizontal, 22).padding(.vertical, 12)
-                    .background(Amber.amber)
-                    .overlay(Rectangle().strokeBorder(Amber.ink, lineWidth: 3))
+                Text("By \(by)").font(Amber.font(24)).foregroundStyle(Amber.body)
+                Spacer()
+                Text("Open").font(Amber.font(24, .bold)).foregroundStyle(.white)
+                    .padding(.horizontal, 26).padding(.vertical, 12)
+                    .background(Capsule().fill(Amber.ink))
             }
         }
-        .padding(36)
+        .padding(40)
         .frame(width: 600, height: 400, alignment: .topLeading)
-        .background(Amber.paper)
-        .overlay(Rectangle().strokeBorder(Amber.ink, lineWidth: 6))
+        .background(Color.white)
         let renderer = ImageRenderer(content: card)
         renderer.scale = 2
         return renderer.uiImage

@@ -166,3 +166,29 @@ create table if not exists tool_talk (
   created_at  timestamptz not null default now()
 );
 create index if not exists tool_talk_tool_idx on tool_talk(tool_id, created_at);
+
+-- The group chat's agent (agent.js). Every turn anyone has with it, across
+-- every tool, is its transcript; chat_memories is its memory, one fact per
+-- row in Chewbacca's shape, with Amber's modality as a column.
+create table if not exists chat_turns (
+  id          text primary key,
+  circle_id   text not null references circles(id) on delete cascade,
+  tool_slug   text,
+  member_id   text references members(id) on delete set null,
+  role        text not null,
+  text        text not null,
+  created_at  timestamptz not null default now()
+);
+create index if not exists chat_turns_circle_idx on chat_turns(circle_id, created_at);
+
+create table if not exists chat_memories (
+  id           text primary key,
+  circle_id    text not null references circles(id) on delete cascade,
+  name         text not null,
+  description  text not null,
+  body         text not null,
+  modality     text not null default 'fact',
+  member_id    text references members(id) on delete set null,
+  updated_at   timestamptz not null default now(),
+  unique (circle_id, name)
+);

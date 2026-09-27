@@ -10,19 +10,25 @@
 		00F83CCF0FF2477CE36C5531 /* AtkinsonHyperlegibleNext-ExtraBold.ttf in Resources */ = {isa = PBXBuildFile; fileRef = 813F7B20A1A6DF85088644CE /* AtkinsonHyperlegibleNext-ExtraBold.ttf */; };
 		0E6123DDB493326C63FD78FF /* AtkinsonHyperlegibleNext-Bold.ttf in Resources */ = {isa = PBXBuildFile; fileRef = C4271D00D20A100F67DE52F6 /* AtkinsonHyperlegibleNext-Bold.ttf */; };
 		1D86B023968B6B10B40CEB6A /* AtkinsonHyperlegibleNext-ExtraBold.ttf in Resources */ = {isa = PBXBuildFile; fileRef = 813F7B20A1A6DF85088644CE /* AtkinsonHyperlegibleNext-ExtraBold.ttf */; };
+		21C5FFA5E501F4E790EAB923 /* Geist-Regular.ttf in Resources */ = {isa = PBXBuildFile; fileRef = 2569B9FD493798E68FC661EB /* Geist-Regular.ttf */; };
 		27079E838D6586437E98F003 /* MessagesViewController.swift in Sources */ = {isa = PBXBuildFile; fileRef = 35FBE240C764B0540CB0C643 /* MessagesViewController.swift */; };
 		35B03A8A69A5D16A9C6FB210 /* AmberApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = D67C939A326F082258A15573 /* AmberApp.swift */; };
 		4699B0434BC7872020509CBC /* AtkinsonHyperlegibleNext-Regular.ttf in Resources */ = {isa = PBXBuildFile; fileRef = 67E1DD25D2E7F6836FB23D6A /* AtkinsonHyperlegibleNext-Regular.ttf */; };
 		49FF77946B296965AB66593D /* API.swift in Sources */ = {isa = PBXBuildFile; fileRef = 55FAAEBF5C67B9D0A945C4C1 /* API.swift */; };
+		55EA1F12969106D07EE6FB48 /* Geist-Regular.ttf in Resources */ = {isa = PBXBuildFile; fileRef = 2569B9FD493798E68FC661EB /* Geist-Regular.ttf */; };
 		62E178356F8716448CEE1825 /* ChatStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = ABBDA03A9043CBE332F8D29F /* ChatStore.swift */; };
 		6891FACE49D0D58383B6F3E0 /* Theme.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3492BE202952A212545CF049 /* Theme.swift */; };
+		7275F53681C51BD37128454E /* Geist-SemiBold.ttf in Resources */ = {isa = PBXBuildFile; fileRef = 74F9F5DF1B61F8ECC0CFE26C /* Geist-SemiBold.ttf */; };
 		8B23BC1A20CFCB03210850BB /* Theme.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3492BE202952A212545CF049 /* Theme.swift */; };
 		922BEF6557AB83C6AE817EDC /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = 8D20BE991081948FA5B1B529 /* Assets.xcassets */; };
+		93F47965C431810A46866CCA /* Geist-Medium.ttf in Resources */ = {isa = PBXBuildFile; fileRef = 1CE11CBDE311231E71BB0DE5 /* Geist-Medium.ttf */; };
+		949708B75A88E5326294AAEF /* Geist-Medium.ttf in Resources */ = {isa = PBXBuildFile; fileRef = 1CE11CBDE311231E71BB0DE5 /* Geist-Medium.ttf */; };
 		AACE01E4D134003A86208AF7 /* AtkinsonHyperlegibleNext-Bold.ttf in Resources */ = {isa = PBXBuildFile; fileRef = C4271D00D20A100F67DE52F6 /* AtkinsonHyperlegibleNext-Bold.ttf */; };
 		BCD62F076A22FE332C2A9DD2 /* AtkinsonHyperlegibleNext-Regular.ttf in Resources */ = {isa = PBXBuildFile; fileRef = 67E1DD25D2E7F6836FB23D6A /* AtkinsonHyperlegibleNext-Regular.ttf */; };
 		D10A009A72FF620C70A0C4FF /* AmberMessages.appex in Embed Foundation Extensions */ = {isa = PBXBuildFile; fileRef = BA1781F291D4C4D4C9287971 /* AmberMessages.appex */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
 		D5D9927E82AF506C0ADB3E27 /* Voice.swift in Sources */ = {isa = PBXBuildFile; fileRef = BBCFCD8C77ED7099A18B5847 /* Voice.swift */; };
 		D80074D84351A52427D9BC70 /* API.swift in Sources */ = {isa = PBXBuildFile; fileRef = 55FAAEBF5C67B9D0A945C4C1 /* API.swift */; };
+		ED7ABE0CACF79DF9D7CDC426 /* Geist-SemiBold.ttf in Resources */ = {isa = PBXBuildFile; fileRef = 74F9F5DF1B61F8ECC0CFE26C /* Geist-SemiBold.ttf */; };
 		F132084806D23109F12D7D65 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = 14B0A2FAB92ED764BAEFA514 /* Assets.xcassets */; };
 		F2B76ACDFEED3BB8A0D3AE37 /* Views.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8B95D41F7D7B4F90369C5B78 /* Views.swift */; };
 /* End PBXBuildFile section */
@@ -54,10 +60,13 @@
 /* Begin PBXFileReference section */
 		14B0A2FAB92ED764BAEFA514 /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
 		197E49A68AC816B84A7E25FD /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist; path = Info.plist; sourceTree = "<group>"; };
+		1CE11CBDE311231E71BB0DE5 /* Geist-Medium.ttf */ = {isa = PBXFileReference; lastKnownFileType = file; path = "Geist-Medium.ttf"; sourceTree = "<group>"; };
+		2569B9FD493798E68FC661EB /* Geist-Regular.ttf */ = {isa = PBXFileReference; lastKnownFileType = file; path = "Geist-Regular.ttf"; sourceTree = "<group>"; };
 		3492BE202952A212545CF049 /* Theme.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Theme.swift; sourceTree = "<group>"; };
 		35FBE240C764B0540CB0C643 /* MessagesViewController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MessagesViewController.swift; sourceTree = "<group>"; };
 		55FAAEBF5C67B9D0A945C4C1 /* API.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = API.swift; sourceTree = "<group>"; };
 		67E1DD25D2E7F6836FB23D6A /* AtkinsonHyperlegibleNext-Regular.ttf */ = {isa = PBXFileReference; lastKnownFileType = file; path = "AtkinsonHyperlegibleNext-Regular.ttf"; sourceTree = "<group>"; };
+		74F9F5DF1B61F8ECC0CFE26C /* Geist-SemiBold.ttf */ = {isa = PBXFileReference; lastKnownFileType = file; path = "Geist-SemiBold.ttf"; sourceTree = "<group>"; };
 		813F7B20A1A6DF85088644CE /* AtkinsonHyperlegibleNext-ExtraBold.ttf */ = {isa = PBXFileReference; lastKnownFileType = file; path = "AtkinsonHyperlegibleNext-ExtraBold.ttf"; sourceTree = "<group>"; };
 		8B95D41F7D7B4F90369C5B78 /* Views.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Views.swift; sourceTree = "<group>"; };
 		8D20BE991081948FA5B1B529 /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
@@ -77,6 +86,9 @@
 				C4271D00D20A100F67DE52F6 /* AtkinsonHyperlegibleNext-Bold.ttf */,
 				813F7B20A1A6DF85088644CE /* AtkinsonHyperlegibleNext-ExtraBold.ttf */,
 				67E1DD25D2E7F6836FB23D6A /* AtkinsonHyperlegibleNext-Regular.ttf */,
+				1CE11CBDE311231E71BB0DE5 /* Geist-Medium.ttf */,
+				2569B9FD493798E68FC661EB /* Geist-Regular.ttf */,
+				74F9F5DF1B61F8ECC0CFE26C /* Geist-SemiBold.ttf */,
 			);
 			path = Fonts;
 			sourceTree = "<group>";
@@ -222,6 +234,9 @@
 				0E6123DDB493326C63FD78FF /* AtkinsonHyperlegibleNext-Bold.ttf in Resources */,
 				1D86B023968B6B10B40CEB6A /* AtkinsonHyperlegibleNext-ExtraBold.ttf in Resources */,
 				4699B0434BC7872020509CBC /* AtkinsonHyperlegibleNext-Regular.ttf in Resources */,
+				93F47965C431810A46866CCA /* Geist-Medium.ttf in Resources */,
+				55EA1F12969106D07EE6FB48 /* Geist-Regular.ttf in Resources */,
+				ED7ABE0CACF79DF9D7CDC426 /* Geist-SemiBold.ttf in Resources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -233,6 +248,9 @@
 				AACE01E4D134003A86208AF7 /* AtkinsonHyperlegibleNext-Bold.ttf in Resources */,
 				00F83CCF0FF2477CE36C5531 /* AtkinsonHyperlegibleNext-ExtraBold.ttf in Resources */,
 				BCD62F076A22FE332C2A9DD2 /* AtkinsonHyperlegibleNext-Regular.ttf in Resources */,
+				949708B75A88E5326294AAEF /* Geist-Medium.ttf in Resources */,
+				21C5FFA5E501F4E790EAB923 /* Geist-Regular.ttf in Resources */,
+				7275F53681C51BD37128454E /* Geist-SemiBold.ttf in Resources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -308,7 +326,7 @@
 				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
 				CODE_SIGN_STYLE = Automatic;
 				COPY_PHASE_STRIP = NO;
-				CURRENT_PROJECT_VERSION = 38;
+				CURRENT_PROJECT_VERSION = 39;
 				DEBUG_INFORMATION_FORMAT = dwarf;
 				DEVELOPMENT_TEAM = 4DMVHH99R2;
 				ENABLE_STRICT_OBJC_MSGSEND = YES;
@@ -376,7 +394,7 @@
 				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
 				CODE_SIGN_STYLE = Automatic;
 				COPY_PHASE_STRIP = NO;
-				CURRENT_PROJECT_VERSION = 38;
+				CURRENT_PROJECT_VERSION = 39;
 				DEBUG_INFORMATION_FORMAT = "dwarf-with-dsym";
 				DEVELOPMENT_TEAM = 4DMVHH99R2;
 				ENABLE_NS_ASSERTIONS = NO;

@@ -33,7 +33,7 @@ struct NameView: View {
         ScrollView {
             VStack(alignment: .leading, spacing: 18) {
                 Brand()
-                Text("What should the chat call you?").font(Amber.font(30, .heavy)).foregroundStyle(Amber.ink)
+                Text("What should the chat call you?").font(Amber.font(30, .heavy)).headline().foregroundStyle(Amber.ink)
                 Text("People here will see this name next to what you make.")
                     .font(Amber.font(18)).foregroundStyle(Amber.body)
                 TextField("Your first name", text: $text)
@@ -54,7 +54,7 @@ struct NameView: View {
 struct Brand: View {
     var body: some View {
         HStack(spacing: 8) {
-            Circle().fill(Amber.amber).overlay(Circle().strokeBorder(Amber.ink, lineWidth: 2))
+            Circle().fill(Amber.amber)
                 .frame(width: 18, height: 18)
             Text("Amber").font(Amber.font(20, .heavy)).foregroundStyle(Amber.ink)
         }
@@ -88,62 +88,84 @@ struct HomeView: View {
     ]
 
     var body: some View {
-        ScrollView {
-            VStack(alignment: .leading, spacing: 20) {
-                Brand()
-                Text(store.session == nil ? "Let's build together" : "Made in this chat")
-                    .font(Amber.font(32, .heavy)).foregroundStyle(Amber.ink)
-                if store.session == nil {
-                    Text("Say what this chat needs. Claude makes it, and everyone here can open it and change it. Nobody makes an account.")
-                        .font(Amber.font(18)).foregroundStyle(Amber.body)
-                }
-                ErrorLine()
-                if let tools = store.overview?.tools, !tools.isEmpty {
-                    LazyVGrid(columns: [GridItem(.adaptive(minimum: 150), spacing: 16)], spacing: 16) {
-                        ForEach(tools) { tool in
-                            Button { store.route = .tool(tool.slug); store.host?.expand() } label: { Tile(tool: tool) }
-                                .buttonStyle(.plain)
+        VStack(spacing: 0) {
+            ScrollViewReader { proxy in
+                ScrollView {
+                    VStack(alignment: .leading, spacing: 18) {
+                        Brand()
+                        Text(store.session == nil ? "Let's build together" : "Made in this chat")
+                            .font(Amber.font(30, .heavy)).headline().foregroundStyle(Amber.ink)
+                        if store.session == nil {
+                            Text("Tell Amber what this chat needs. It builds it, everyone here can open it and change it, and it remembers what each of you said.")
+                                .font(Amber.font(18)).foregroundStyle(Amber.body)
                         }
-                    }
-                } else if store.loading {
-                    ProgressView().frame(maxWidth: .infinity, minHeight: 80)
-                }
-                VStack(alignment: .leading, spacing: 10) {
-                    Text(store.session == nil ? "What should we make?" : "Make something new")
-                        .font(Amber.font(20, .bold)).foregroundStyle(Amber.ink)
-                    HoldToTalk(label: "Hold and say what to make") { heard in
-                        Task { await store.make(heard) }
-                    }
-                    Text("Or type it").font(Amber.font(16, .bold)).foregroundStyle(Amber.muted)
-                    Composer(placeholder: "A sign-up sheet for Sunday dinner", text: $request, focused: $focused)
-                        .onChange(of: focused) { _, isOn in if isOn { store.host?.expand() } }
-                    if request.isEmpty {
-                        ForEach(ideas, id: \.self) { idea in
-                            Button { request = idea } label: {
-                                Text(idea).font(Amber.font(18, .bold)).foregroundStyle(Amber.ink)
-                                    .frame(maxWidth: .infinity, alignment: .leading).padding(14)
-                                    .background(Amber.sheet)
-                                    .overlay(Rectangle().strokeBorder(Amber.ink.opacity(0.18), lineWidth: 2))
+                        ErrorLine()
+                        if let tools = store.overview?.tools, !tools.isEmpty {
+                            LazyVGrid(columns: [GridItem(.adaptive(minimum: 150), spacing: 12)], spacing: 12) {
+                                ForEach(tools) { tool in
+                                    Button { store.route = .tool(tool.slug); store.host?.expand() } label: { Tile(tool: tool) }
+                                        .buttonStyle(.plain)
+                                }
+                            }
+                        } else if store.loading {
+                            ProgressView().frame(maxWidth: .infinity, minHeight: 80)
+                        }
+                        if (store.talk[""] ?? []).isEmpty && store.changing["__new"] == nil {
+                            VStack(alignment: .leading, spacing: 10) {
+                                Text("Try saying").font(Amber.font(15, .bold)).foregroundStyle(Amber.muted)
+                                ForEach(ideas, id: \.self) { idea in
+                                    Button { Task { await store.say("", "Make \(idea.lowercased())") } } label: {
+                                        Text(idea).font(Amber.font(17)).foregroundStyle(Amber.ink)
+                                            .frame(maxWidth: .infinity, alignment: .leading).padding(14)
+                                            .block()
+                                    }
+                                }
                             }
                         }
+                        ForEach(store.talk[""] ?? []) { turn in
+                            Bubble(text: turn.text, mine: turn.mine)
+                        }
+                        if let started = store.changing["__new"] {
+                            TimelineView(.periodic(from: .now, by: 1)) { context in
+                                Bubble(text: "Building it. \(Int(context.date.timeIntervalSince(started))) seconds so far. You can keep talking to me.", mine: false)
+                            }
+                        }
+                        if let people = store.overview?.people, !people.isEmpty {
+                            Text("In this chat: " + people.map(\.name).joined(separator: ", "))
+                                .font(Amber.font(15)).foregroundStyle(Amber.muted)
+                        }
+                        Color.clear.frame(height: 1).id("end")
                     }
-                    Button("Make it") {
+                    .padding(20)
+                }
+                .onChange(of: store.talk[""]?.count ?? 0) { _, _ in
+                    withAnimation { proxy.scrollTo("end", anchor: .bottom) }
+                }
+            }
+            VStack(alignment: .leading, spacing: 10) {
+                HoldToTalk(label: "Hold to talk to Amber", onPress: { store.speaker.stop() }) { heard in
+                    Task { await store.say("", heard) }
+                }
+                HStack(alignment: .bottom, spacing: 10) {
+                    TextField("Or type what the chat needs", text: $request, axis: .vertical)
+                        .font(Amber.font(18)).lineLimit(1...3).focused($focused)
+                        .padding(12).frame(minHeight: 48).block()
+                        .onChange(of: focused) { _, isOn in if isOn { store.host?.expand() } }
+                    Button("Send") {
                         focused = false
                         let text = request
                         request = ""
-                        Task { await store.make(text) }
+                        Task { await store.say("", text) }
                     }
-                    .buttonStyle(BlockButton(primary: true, full: true))
+                    .buttonStyle(BlockButton(primary: true))
                     .disabled(request.trimmingCharacters(in: .whitespaces).isEmpty)
                 }
-                if let people = store.overview?.people, !people.isEmpty {
-                    Text("In this chat: " + people.map(\.name).joined(separator: ", "))
-                        .font(Amber.font(16)).foregroundStyle(Amber.muted)
-                }
             }
-            .padding(20)
+            .padding(16)
+            .background(Amber.paper)
+            .overlay(Rectangle().fill(Amber.hairline).frame(height: 1), alignment: .top)
         }
-        .refreshable { await store.refresh() }
+        .task { await store.loadTalk("") }
     }
 }
 
@@ -158,7 +180,7 @@ struct Tile: View {
             if tool.has_draft {
                 Text("Change waiting").font(Amber.font(15, .bold)).foregroundStyle(Amber.ink)
                     .padding(.horizontal, 8).padding(.vertical, 2)
-                    .background(Amber.wash).overlay(Rectangle().strokeBorder(Amber.ink, lineWidth: 2))
+                    .background(Capsule().fill(Amber.wash))
             }
             Text("\(tool.entries) \(tool.entries == 1 ? "entry" : "entries") · \(timeAgo(tool.updated_at))")
                 .font(Amber.font(15)).foregroundStyle(Amber.muted)
@@ -179,10 +201,10 @@ struct BuildingView: View {
         TimelineView(.periodic(from: .now, by: 1)) { context in
             VStack(alignment: .leading, spacing: 18) {
                 Brand()
-                Text("Making it").font(Amber.font(32, .heavy)).foregroundStyle(Amber.ink)
+                Text("Making it").font(Amber.font(32, .heavy)).headline().foregroundStyle(Amber.ink)
                 Text("\u{201C}\(state.request)\u{201D}").font(Amber.font(19, .bold)).foregroundStyle(Amber.ink)
                     .padding(.leading, 12)
-                    .overlay(Rectangle().fill(Amber.amber).frame(width: 6), alignment: .leading)
+                    .overlay(Capsule().fill(Amber.hairline).frame(width: 3), alignment: .leading)
                 VStack(alignment: .leading, spacing: 14) {
                     ForEach(stages, id: \.0) { key, label in
                         let index = stages.firstIndex { $0.0 == state.stage } ?? 0
@@ -245,7 +267,7 @@ struct ToolView: View {
                         }
                         if let tool = store.tool(slug) {
                             VStack(alignment: .leading, spacing: 4) {
-                                Text(tool.title).font(Amber.font(30, .heavy)).foregroundStyle(Amber.ink)
+                                Text(tool.title).font(Amber.font(30, .heavy)).headline().foregroundStyle(Amber.ink)
                                 if let by = tool.made_by { Text("Made by \(by)").font(Amber.font(16, .bold)).foregroundStyle(Amber.body) }
                             }
                             safariCard(tool)
@@ -295,7 +317,7 @@ struct ToolView: View {
             .foregroundStyle(Amber.ink)
             .padding(16)
             .frame(maxWidth: .infinity, alignment: .leading)
-            .block(fill: Amber.amber, lifted: true)
+            .block(lifted: true)
         }
         .buttonStyle(.plain)
         .contextMenu {
@@ -330,7 +352,7 @@ struct ToolView: View {
         }
         .padding(16)
         .background(Amber.paper)
-        .overlay(Rectangle().fill(Amber.ink).frame(height: 2), alignment: .top)
+        .overlay(Rectangle().fill(Amber.hairline).frame(height: 1), alignment: .top)
     }
 
     @ViewBuilder
@@ -475,17 +497,22 @@ struct Bubble<Extra: View>: View {
     }
 
     var body: some View {
-        HStack {
-            if mine { Spacer(minLength: 40) }
-            VStack(alignment: .leading, spacing: 10) {
-                Text(text).font(Amber.font(18, mine ? .bold : .regular))
-                    .foregroundStyle(mine ? Amber.sheet : Amber.ink)
-                extra()
+        if mine {
+            HStack {
+                Spacer(minLength: 48)
+                Text(text).font(Amber.font(18)).foregroundStyle(Amber.ink)
+                    .padding(.horizontal, 16).padding(.vertical, 12)
+                    .background(RoundedRectangle(cornerRadius: 20, style: .continuous).fill(Amber.wash))
             }
-            .padding(12)
-            .background(mine ? Amber.ink : Amber.sheet)
-            .overlay(Rectangle().strokeBorder(Amber.ink, lineWidth: 2))
-            if !mine { Spacer(minLength: 40) }
+        } else {
+            HStack(alignment: .top, spacing: 10) {
+                Circle().fill(Amber.amber).frame(width: 10, height: 10).padding(.top, 8)
+                VStack(alignment: .leading, spacing: 12) {
+                    Text(text).font(Amber.font(18)).foregroundStyle(Amber.ink).lineSpacing(3)
+                    extra()
+                }
+                Spacer(minLength: 16)
+            }
         }
     }
 }
@@ -523,8 +550,8 @@ struct LivePreview: View {
             }
             WebFrame(url: url)
                 .frame(height: 380)
-                .overlay(Rectangle().strokeBorder(Amber.ink, lineWidth: 2))
-                .background(Rectangle().fill(Amber.ink).offset(x: 4, y: 4))
+                .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+                .block(lifted: true)
         }
     }
 }
