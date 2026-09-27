@@ -8,8 +8,7 @@ struct AmberApp: App {
             ScrollView {
                 VStack(alignment: .leading, spacing: 20) {
                     HStack(spacing: 10) {
-                        Circle().fill(Amber.amber)
-                            .frame(width: 24, height: 24)
+                        Image("AmberLogo").resizable().scaledToFit().frame(height: 30)
                         Text("Amber").font(Amber.font(26, .heavy)).foregroundStyle(Amber.ink)
                     }
                     Text("Amber lives in Messages.").font(Amber.font(38, .heavy)).foregroundStyle(Amber.ink)
@@ -20,6 +19,15 @@ struct AmberApp: App {
                 .padding(24)
             }
             .background(Amber.paper.ignoresSafeArea())
+            // The iMessage extension cannot open Safari itself, so it opens
+            // amberapp://open?u=<link> and this passes the link to Safari.
+            .onOpenURL { url in
+                guard url.scheme == "amberapp",
+                      let target = URLComponents(url: url, resolvingAgainstBaseURL: false)?
+                        .queryItems?.first(where: { $0.name == "u" })?.value,
+                      let web = URL(string: target), web.scheme == "https" else { return }
+                UIApplication.shared.open(web)
+            }
         }
     }
 

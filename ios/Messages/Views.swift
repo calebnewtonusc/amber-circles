@@ -14,7 +14,9 @@ struct RootView: View {
             } else {
                 switch store.route {
                 case .home: HomeView()
+                    .transition(.asymmetric(insertion: .move(edge: .leading).combined(with: .opacity), removal: .opacity))
                 case .tool(let slug): ToolView(slug: slug, speaker: store.speaker)
+                    .transition(.asymmetric(insertion: .move(edge: .trailing).combined(with: .opacity), removal: .opacity))
                 }
             }
         }
@@ -54,8 +56,7 @@ struct NameView: View {
 struct Brand: View {
     var body: some View {
         HStack(spacing: 8) {
-            Circle().fill(Amber.amber)
-                .frame(width: 18, height: 18)
+            Image("AmberLogo").resizable().scaledToFit().frame(height: 26)
             Text("Amber").font(Amber.font(20, .heavy)).foregroundStyle(Amber.ink)
         }
     }
@@ -87,8 +88,15 @@ struct HomeView: View {
         "Rides to church this week",
     ]
 
+    @State private var watching = false
+
     var body: some View {
         VStack(spacing: 0) {
+            if store.changing["__new"] != nil {
+                LivePanel(slug: nil, expanded: $watching)
+                    .padding(.horizontal, 16).padding(.top, 12)
+                    .transition(.move(edge: .top).combined(with: .opacity))
+            }
             ScrollViewReader { proxy in
                 ScrollView {
                     VStack(alignment: .leading, spacing: 18) {
@@ -103,7 +111,7 @@ struct HomeView: View {
                         if let tools = store.overview?.tools, !tools.isEmpty {
                             VStack(spacing: 10) {
                                 ForEach(tools) { tool in
-                                    Button { store.route = .tool(tool.slug); store.host?.expand() } label: {
+                                    Button { withAnimation(.spring(response: 0.4, dampingFraction: 0.9)) { store.route = .tool(tool.slug) }; store.host?.expand() } label: {
                                         AppRow(tool: tool, unshared: store.unpublished.contains(tool.slug))
                                     }
                                     .buttonStyle(.plain)
@@ -114,6 +122,7 @@ struct HomeView: View {
                         }
                         ForEach(store.talk[""] ?? []) { turn in
                             Bubble(text: turn.text, mine: turn.mine)
+                                .transition(.move(edge: .bottom).combined(with: .opacity))
                         }
                         if let started = store.changing["__new"] {
                             TimelineView(.periodic(from: .now, by: 1)) { context in
@@ -155,6 +164,8 @@ struct HomeView: View {
             .background(Amber.paper)
             .overlay(Rectangle().fill(Amber.hairline).frame(height: 1), alignment: .top)
         }
+        .animation(.spring(response: 0.45, dampingFraction: 0.86), value: store.changing["__new"] != nil)
+        .onChange(of: store.changing["__new"] != nil) { _, building in if !building { watching = false } }
         .task {
             await store.refresh()
             await store.loadTalk("")
@@ -265,6 +276,7 @@ struct ToolView: View {
     @State private var note = ""
     @State private var showing: URL?
     @State private var copied = false
+    @State private var previewing = false
     @ObservedObject private var speaker: Speaker
 
     init(slug: String, speaker: Speaker) {
@@ -276,23 +288,37 @@ struct ToolView: View {
 
     var body: some View {
         VStack(spacing: 0) {
+            // Pinned above the conversation, so when the preview grows the
+            // chat moves down beneath it instead of scrolling away.
+            VStack(alignment: .leading, spacing: 12) {
+                HStack(spacing: 10) {
+                    Button { withAnimation(.spring(response: 0.4, dampingFraction: 0.9)) { store.route = .home } } label: {
+                        Image(systemName: "chevron.left").font(.system(size: 16, weight: .bold)).foregroundStyle(Amber.ink)
+                            .frame(width: 36, height: 36).background(Circle().fill(Amber.wash))
+                    }
+                    .accessibilityLabel("Everything in this chat")
+                    VStack(alignment: .leading, spacing: 0) {
+                        Text(store.tool(slug)?.title ?? "").font(Amber.font(22, .heavy)).headline().foregroundStyle(Amber.ink).lineLimit(1)
+                        if let by = store.tool(slug)?.made_by { Text("Made by \(by)").font(Amber.font(14)).foregroundStyle(Amber.muted) }
+                    }
+                    Spacer(minLength: 0)
+                }
+                if store.tool(slug) != nil {
+                    LivePanel(slug: slug, expanded: $previewing)
+                        .transition(.move(edge: .top).combined(with: .opacity))
+                    if store.unpublished.contains(slug) {
+                        Button("Publish to the chat") { store.publish(slug) }
+                            .buttonStyle(BlockButton(primary: true, full: true))
+                            .transition(.opacity)
+                    }
+                }
+            }
+            .padding(.horizontal, 16).padding(.top, 14).padding(.bottom, 8)
+            .animation(.spring(response: 0.45, dampingFraction: 0.86), value: store.tool(slug) != nil)
             ScrollViewReader { proxy in
                 ScrollView {
                     VStack(alignment: .leading, spacing: 16) {
-                        Button { store.route = .home } label: {
-                            Label("Everything in this chat", systemImage: "chevron.left")
-                                .font(Amber.font(17, .bold)).foregroundStyle(Amber.ink)
-                        }
                         if let tool = store.tool(slug) {
-                            VStack(alignment: .leading, spacing: 4) {
-                                Text(tool.title).font(Amber.font(30, .heavy)).headline().foregroundStyle(Amber.ink)
-                                if let by = tool.made_by { Text("Made by \(by)").font(Amber.font(16, .bold)).foregroundStyle(Amber.body) }
-                            }
-                            safariCard(tool)
-                            if store.unpublished.contains(slug) {
-                                Button("Publish to the chat") { store.publish(slug) }
-                                    .buttonStyle(BlockButton(primary: true, full: true))
-                            }
                             ErrorLine()
                             conversation(tool)
                             DisclosureGroup("Comments from the chat (\(notes.count))") { thoughts }
@@ -302,10 +328,10 @@ struct ToolView: View {
                             ProgressView().frame(maxWidth: .infinity, minHeight: 120)
                         }
                     }
-                    .padding(20)
+                    .padding(.horizontal, 20).padding(.vertical, 8)
                 }
                 .onChange(of: store.talk[slug]?.count ?? 0) { _, _ in
-                    withAnimation { proxy.scrollTo("end", anchor: .bottom) }
+                    withAnimation(.spring(response: 0.4, dampingFraction: 0.9)) { proxy.scrollTo("end", anchor: .bottom) }
                 }
             }
             dock
@@ -320,40 +346,11 @@ struct ToolView: View {
         .sheet(item: $showing) { url in SafariSheet(url: url).ignoresSafeArea() }
     }
 
-    /// The tool lives on the web. This card is how you get there and back:
-    /// open it in Safari, play with it, come back and talk.
-    private func safariCard(_ tool: ToolItem) -> some View {
-        Button {
-            showing = store.openURL(slug, draft: tool.has_draft)
-        } label: {
-            HStack(spacing: 14) {
-                Image(systemName: "safari").font(.system(size: 28, weight: .semibold))
-                VStack(alignment: .leading, spacing: 2) {
-                    Text(tool.has_draft ? "Try your draft" : "Open it")
-                        .font(Amber.font(20, .heavy))
-                    Text(tool.has_draft ? "Only you see this until you publish it." : store.unpublished.contains(slug) ? "Only you have it until you publish it" : "Live for everyone in the chat")
-                        .font(Amber.font(15)).multilineTextAlignment(.leading)
-                }
-                Spacer(minLength: 0)
-                Image(systemName: "arrow.up.right").font(.system(size: 18, weight: .bold))
-            }
-            .foregroundStyle(Amber.ink)
-            .padding(16)
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .block(lifted: true)
-        }
-        .buttonStyle(.plain)
-        .contextMenu {
-            Button("Copy the link") { UIPasteboard.general.url = store.link(for: slug) }
-            Button("Send it to the chat") { store.send(tool, note: "Tap to open it together.") }
-        }
-    }
-
     /// The talk button lives at the bottom, where a thumb already is.
     private var dock: some View {
         VStack(alignment: .leading, spacing: 10) {
             HoldToTalk(label: "Hold to talk to Amber", onPress: { speaker.stop() }) { heard in
-                Task { await store.say(slug, heard, open: { showing = $0 }); await load() }
+                Task { await store.say(slug, heard, open: { store.host?.openInRealSafari($0) }); await load() }
             }
             HStack(alignment: .bottom, spacing: 10) {
                 TextField("Or type it", text: $request, axis: .vertical)
@@ -363,15 +360,11 @@ struct ToolView: View {
                     focused = false
                     let text = request
                     request = ""
-                    Task { await store.say(slug, text, open: { showing = $0 }); await load() }
+                    Task { await store.say(slug, text, open: { store.host?.openInRealSafari($0) }); await load() }
                 }
                 .buttonStyle(BlockButton())
                 .disabled(request.trimmingCharacters(in: .whitespaces).isEmpty)
             }
-            Toggle(isOn: $speaker.isOn) {
-                Text("Amber talks back").font(Amber.font(15, .bold)).foregroundStyle(Amber.body)
-            }
-            .tint(Amber.present)
         }
         .padding(16)
         .background(Amber.paper)
@@ -393,6 +386,7 @@ struct ToolView: View {
         VStack(alignment: .leading, spacing: 10) {
             ForEach(store.talk[slug] ?? []) { turn in
                 Bubble(text: turn.text, mine: turn.mine)
+                    .transition(.move(edge: .bottom).combined(with: .opacity))
             }
             if let started = store.changing[slug] {
                 TimelineView(.periodic(from: .now, by: 1)) { context in
@@ -402,7 +396,7 @@ struct ToolView: View {
             if tool.has_draft, store.changing[slug] == nil {
                 Bubble(text: "Publish it so the chat gets it, or put it back.", mine: false) {
                     HStack(spacing: 10) {
-                        Button("Publish changes") { Task { await store.keep(slug); await load() } }
+                        Button("Publish changes") { store.publishChanges(slug) }
                             .buttonStyle(BlockButton(primary: true, full: true))
                         Button("Put it back") { Task { await store.discard(slug); await load() } }
                             .buttonStyle(BlockButton(full: true))
@@ -552,41 +546,4 @@ struct SafariSheet: UIViewControllerRepresentable {
         return controller
     }
     func updateUIViewController(_ controller: SFSafariViewController, context: Context) {}
-}
-
-import WebKit
-
-/// The tool itself, running live inside the editor, the way v0 shows the
-/// thing next to the conversation. Tap to open it full screen.
-struct LivePreview: View {
-    let url: URL?
-    let label: String
-    let open: () -> Void
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            HStack {
-                Circle().fill(Amber.present).frame(width: 10, height: 10)
-                Text(label).font(Amber.font(16, .bold)).foregroundStyle(Amber.ink)
-                Spacer()
-                Button("Full screen", action: open).font(Amber.font(16, .bold)).foregroundStyle(Amber.ink).underline()
-            }
-            WebFrame(url: url)
-                .frame(height: 380)
-                .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
-                .block(lifted: true)
-        }
-    }
-}
-
-struct WebFrame: UIViewRepresentable {
-    let url: URL?
-    func makeUIView(context: Context) -> WKWebView {
-        let view = WKWebView()
-        view.isOpaque = false
-        view.backgroundColor = UIColor(Amber.paper)
-        if let url { view.load(URLRequest(url: url)) }
-        return view
-    }
-    func updateUIView(_ view: WKWebView, context: Context) {}
 }

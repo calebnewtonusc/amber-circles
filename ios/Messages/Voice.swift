@@ -1,6 +1,7 @@
 import AVFoundation
 import Speech
 import SwiftUI
+import UIKit
 
 /// Hold to talk, let go to send. Caleb, 2026-09-27: "a little voice button at
 /// the bottom. You hold it down. Like, hey, this button here doesn't really
@@ -117,6 +118,7 @@ struct HoldToTalk: View {
                     .onChanged { _ in
                         guard !pressing else { return }
                         pressing = true
+                        UIImpactFeedbackGenerator(style: .medium).impactOccurred()
                         onPress()
                         listener.start()
                     }
@@ -141,9 +143,9 @@ struct HoldToTalk: View {
 /// conversation you can have with your phone at arm's length.
 @MainActor
 final class Speaker: NSObject, ObservableObject, AVAudioPlayerDelegate {
-    @Published var isOn = UserDefaults.standard.object(forKey: "amber.voice") as? Bool ?? true {
-        didSet { UserDefaults.standard.set(isOn, forKey: "amber.voice"); if !isOn { player?.stop() } }
-    }
+    /// Always on (Caleb, 2026-09-27: "just have it so amber always talks back
+    /// to save screen space").
+    let isOn = true
     @Published var isSpeaking = false
     private var player: AVAudioPlayer?
 

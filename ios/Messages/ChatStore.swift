@@ -8,10 +8,19 @@ enum Route: Hashable {
 
 /// One line of the conversation with a tool: what someone said, or what
 /// Amber said back.
-struct Turn: Identifiable, Equatable {
-    let id = UUID()
+struct Turn: Identifiable, Equatable, Codable {
+    var id = UUID()
     let text: String
     let mine: Bool
+}
+
+/// What is on this phone and not yet in the cloud: the conversation, apps not
+/// yet published, and where the person was. Saved on every change, so closing
+/// iMessage by accident picks up like nothing happened (Caleb, 2026-09-27).
+struct LocalState: Codable {
+    var talk: [String: [Turn]] = [:]
+    var unpublished: Set<String> = []
+    var slug: String?
 }
 
 struct BuildState: Equatable {
@@ -30,28 +39,34 @@ final class ChatStore: ObservableObject {
     @Published var name: String = UserDefaults.standard.string(forKey: "amber.name") ?? ""
     @Published var error: String?
     @Published var building: BuildState?
-    @Published var route: Route = .home
+    @Published var route: Route = .home { didSet { saveLocal() } }
     @Published var loading = false
     @Published var expanded = false
     /// The conversation with each tool, kept here so it survives the building
     /// screen replacing the tool's screen.
-    @Published var talk: [String: [Turn]] = [:]
+    @Published var talk: [String: [Turn]] = [:] { didSet { saveLocal() } }
     let speaker = Speaker()
     /// Changes being built right now, by tool, with when they started. The
     /// conversation stays open while they run (pipecat's async tools,
     /// processors/aggregators/async_tool_messages.py).
     @Published var changing: [String: Date] = [:]
+    /// The half-written page and what is being added right now, per tool
+    /// ("__new" for an app being made), for the live preview.
+    @Published var liveHTML: [String: String] = [:]
+    @Published var doing: [String: String] = [:]
     /// Tools built but not yet shared. Nothing goes into the message box
     /// until the person taps Publish (Caleb, 2026-09-27: "the text already
     /// tries to send without me clicking publish").
-    @Published var unpublished: Set<String> = []
+    @Published var unpublished: Set<String> = [] { didSet { saveLocal() } }
 
     /// Amber opens a tool by saying what it is, out loud, once.
     func greet(_ slug: String, _ text: String) { reply(slug, text) }
 
     /// Amber's side of the conversation: shown, and said out loud.
     private func reply(_ slug: String, _ text: String) {
-        talk[slug, default: []].append(Turn(text: text, mine: false))
+        withAnimation(.spring(response: 0.4, dampingFraction: 0.88)) {
+            talk[slug, default: []].append(Turn(text: text, mine: false))
+        }
         if let token = session?.token { Task { await speaker.say(text, token: token) } }
     }
 
@@ -60,9 +75,33 @@ final class ChatStore: ObservableObject {
     private var pendingInvite: (chat: String, invite: String, slug: String?)?
 
     private var sessionKey: String { "amber.session.\(participant)" }
+    private var localKey: String { "amber.local.\(participant)" }
+    private var restoring = false
+
+    private func saveLocal() {
+        guard !restoring, !participant.isEmpty else { return }
+        var slug: String?
+        if case .tool(let current) = route { slug = current }
+        let state = LocalState(talk: talk, unpublished: unpublished, slug: slug)
+        if let data = try? JSONEncoder().encode(state) { UserDefaults.standard.set(data, forKey: localKey) }
+    }
+
+    private func restoreLocal() {
+        restoring = true
+        defer { restoring = false }
+        guard let data = UserDefaults.standard.data(forKey: localKey),
+              let state = try? JSONDecoder().decode(LocalState.self, from: data) else {
+            talk = [:]; unpublished = []; route = .home
+            return
+        }
+        talk = state.talk
+        unpublished = state.unpublished
+        route = state.slug.map { .tool($0) } ?? .home
+    }
 
     func attach(_ conversation: MSConversation) {
         participant = conversation.localParticipantIdentifier.uuidString
+        restoreLocal()
         if let data = UserDefaults.standard.data(forKey: sessionKey),
            let saved = try? JSONDecoder().decode(Session.self, from: data) {
             session = saved
@@ -140,7 +179,7 @@ final class ChatStore: ObservableObject {
             guard let session else { return }
             let result = try await API.build(
                 request: text, chat: session.chat, slug: nil, token: session.token
-            ) { [weak self] stage, detail in
+            ) { [weak self] stage, detail, _, _ in
                 self?.building?.stage = stage
                 self?.building?.detail = detail
             }
@@ -161,7 +200,7 @@ final class ChatStore: ObservableObject {
         building = BuildState(request: text)
         do {
             _ = try await API.build(request: text, chat: session.chat, slug: slug, token: session.token) {
-                [weak self] stage, detail in
+                [weak self] stage, detail, _, _ in
                 self?.building?.stage = stage
                 self?.building?.detail = detail
             }
@@ -185,13 +224,16 @@ final class ChatStore: ObservableObject {
         request.setValue(session.token, forHTTPHeaderField: "x-amber-chat")
         guard let (data, _) = try? await URLSession.shared.data(for: request),
               let rows = try? JSONDecoder().decode(Rows.self, from: data) else { return }
-        talk[slug] = rows.turns.compactMap { row in
+        let fromServer: [Turn] = rows.turns.compactMap { row in
             switch row.role {
             case "person": return Turn(text: row.name == nil || row.name == session.name ? row.text : "\(row.name!): \(row.text)", mine: true)
             case "amber": return Turn(text: row.text, mine: false)
             default: return nil
             }
         }
+        // The phone may hold newer lines than the server (a "ready" said while
+        // offline, or a reply not yet logged); never let the older copy win.
+        if fromServer.count >= (talk[slug]?.count ?? 0) { talk[slug] = fromServer }
     }
 
     /// Say something to the chat's agent, on the home screen (slug "") or
@@ -202,7 +244,9 @@ final class ChatStore: ObservableObject {
         let words = text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !words.isEmpty else { return }
         error = nil
-        talk[slug, default: []].append(Turn(text: words, mine: true))
+        withAnimation(.spring(response: 0.4, dampingFraction: 0.88)) {
+            talk[slug, default: []].append(Turn(text: words, mine: true))
+        }
         do {
             if session == nil {
                 let started: Joined = try await API.call(
@@ -274,7 +318,12 @@ final class ChatStore: ObservableObject {
         changing["__new"] = Date()
         defer { changing["__new"] = nil }
         do {
-            let result = try await API.build(request: request, chat: session.chat, slug: nil, token: session.token) { _, _ in }
+            let result = try await API.build(request: request, chat: session.chat, slug: nil, token: session.token) { [weak self] _, _, html, doing in
+                if let html { self?.liveHTML["__new"] = html }
+                if let doing { self?.doing["__new"] = doing }
+            }
+            liveHTML["__new"] = nil
+            doing["__new"] = nil
             await refresh()
             let title = tool(result.slug)?.title ?? "it"
             reply(key, "\(title) is ready. Try it, then tap Publish when you want the chat to have it.")
@@ -291,7 +340,12 @@ final class ChatStore: ObservableObject {
         changing[slug] = Date()
         defer { changing[slug] = nil }
         do {
-            _ = try await API.build(request: request, chat: session.chat, slug: slug, token: session.token) { _, _ in }
+            _ = try await API.build(request: request, chat: session.chat, slug: slug, token: session.token) { [weak self] _, _, html, doing in
+                if let html { self?.liveHTML[slug] = html }
+                if let doing { self?.doing[slug] = doing }
+            }
+            liveHTML[slug] = nil
+            doing[slug] = nil
             await refresh()
             struct Summary: Decodable { let text: String }
             let summary: Summary? = try? await API.call("api/tools/\(slug)/draft-summary", chat: session.token)
@@ -301,13 +355,13 @@ final class ChatStore: ObservableObject {
         }
     }
 
-    func keep(_ slug: String) async {
+    func keep(_ slug: String, announce: Bool = true) async {
         guard let session else { return }
         do {
             struct Kept: Decodable { let version: Int? }
             let _: Kept = try await API.call("api/tools/\(slug)/keep", method: "POST", chat: session.token)
             await refresh()
-            if let kept = tool(slug) { send(kept, note: "I changed this. Tap to see it.") }
+            if announce, let kept = tool(slug) { send(kept, note: "I changed this. Tap to see it.") }
             unpublished.remove(slug)
         } catch { self.error = error.localizedDescription }
     }
@@ -343,11 +397,30 @@ final class ChatStore: ObservableObject {
 
     /// Puts a bubble in the message field. The person still taps send, which
     /// is how iMessage apps are meant to behave and why nothing goes out alone.
-    /// Shares a new tool with the chat, only when the person taps Publish.
+    /// What a bubble in the message box will publish once it is sent.
+    private var pendingSend: [String: Bool] = [:]  // slug -> is a change
+
+    /// Puts the new app's bubble in the message box. It is published when the
+    /// person sends it.
     func publish(_ slug: String) {
         guard let made = tool(slug) else { return }
+        pendingSend[slug] = false
         send(made, note: "I made this for us. Tap to open it.")
+    }
+
+    /// Puts a bubble for the waiting change in the message box; the change
+    /// goes live for everyone when the bubble is sent.
+    func publishChanges(_ slug: String) {
+        guard let changed = tool(slug) else { return }
+        pendingSend[slug] = true
+        send(changed, note: "I changed this. Tap to see it.")
+    }
+
+    func didSend(_ url: URL?) {
+        guard let url, let link = Self.parse(url), let slug = link.slug, let isChange = pendingSend[slug] else { return }
+        pendingSend[slug] = nil
         unpublished.remove(slug)
+        if isChange { Task { await keep(slug, announce: false) } }
     }
 
     func send(_ tool: ToolItem, note: String) {

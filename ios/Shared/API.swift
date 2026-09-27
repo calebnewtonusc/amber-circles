@@ -39,7 +39,7 @@ enum API {
     /// the wait is named as it happens: a blank minute reads as broken.
     static func build(
         request text: String, chat: String, slug: String?, token: String,
-        onStage: @escaping @MainActor (String, String) -> Void
+        onStage: @escaping @MainActor (String, String, String?, String?) -> Void
     ) async throws -> BuildResult {
         var request = URLRequest(url: base.appendingPathComponent("api/build"))
         request.httpMethod = "POST"
@@ -68,7 +68,8 @@ enum API {
                 case "progress":
                     let stage = json["stage"] as? String ?? ""
                     let chars = json["chars"] as? Int
-                    await onStage(stage, chars.map { "\($0.formatted()) letters" } ?? "")
+                    await onStage(stage, chars.map { "\($0.formatted()) letters" } ?? "",
+                                  json["html"] as? String, json["doing"] as? String)
                 case "error":
                     throw Failure(message: json["message"] as? String ?? "Something went wrong. Try again.")
                 case "done":

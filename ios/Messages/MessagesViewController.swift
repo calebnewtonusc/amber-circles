@@ -38,8 +38,22 @@ final class MessagesViewController: MSMessagesAppViewController {
         if presentationStyle != .expanded { requestPresentationStyle(.expanded) }
     }
 
-    func openInSafari(_ url: URL) {
-        extensionContext?.open(url)
+    /// An iMessage extension cannot hand a web link to Safari: iOS opens the
+    /// containing app instead (Caleb's phone, build 39). So the link goes to
+    /// the Amber app, which passes it straight on to Safari.
+    func openInRealSafari(_ url: URL) {
+        var bridge = URLComponents()
+        bridge.scheme = "amberapp"
+        bridge.host = "open"
+        bridge.queryItems = [URLQueryItem(name: "u", value: url.absoluteString)]
+        if let link = bridge.url { extensionContext?.open(link) }
+    }
+
+    /// Publishing happens when the bubble is actually sent, not when it is
+    /// put in the message box: until then nothing reaches the chat.
+    override func didStartSending(_ message: MSMessage, conversation: MSConversation) {
+        super.didStartSending(message, conversation: conversation)
+        store.didSend(message.url)
     }
 }
 
@@ -50,7 +64,7 @@ enum BubbleArt {
     static func render(title: String, by: String) -> UIImage? {
         let card = VStack(alignment: .leading, spacing: 16) {
             HStack(spacing: 10) {
-                Circle().fill(Amber.amber).frame(width: 18, height: 18)
+                Image("AmberLogo").resizable().scaledToFit().frame(height: 30)
                 Text("Let's build together").font(Amber.font(26, .bold)).foregroundStyle(Amber.muted)
             }
             Spacer(minLength: 0)

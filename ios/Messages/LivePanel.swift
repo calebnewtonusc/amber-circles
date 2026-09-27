@@ -1,0 +1,133 @@
+import SwiftUI
+import UIKit
+import WebKit
+
+/// The window onto the app, at the top of the conversation. Collapsed it is a
+/// button that says what is being built right now; tapped, the button itself
+/// grows into a window and you see through it to the live app underneath,
+/// while the chat moves down below it. Caleb, 2026-09-27: "the effect of
+/// seeing through one layer to another", and "the preview button at the top
+/// should animate in ... like genUI ... a little close button appears at the
+/// top to shrink the window back down".
+struct LivePanel: View {
+    @EnvironmentObject var store: ChatStore
+    /// The tool being shown, or nil while a brand new one is being built.
+    let slug: String?
+    @Binding var expanded: Bool
+    var height: CGFloat = 440
+
+    private var key: String { slug ?? "__new" }
+    private var building: Bool { store.changing[key] != nil }
+    private var liveHTML: String? { store.liveHTML[key] }
+
+    var body: some View {
+        VStack(spacing: 0) {
+            header
+            // Always loaded, hidden by the button's own shape until it grows
+            // (Caleb: "the back layer should already be loaded but hidden"),
+            // so opening is a reveal, never a wait.
+            WebFrame(url: building ? nil : slug.flatMap { store.openURL($0, draft: store.tool($0)?.has_draft == true) },
+                     html: building ? liveHTML : nil)
+                .id(slug.map { "\($0)-\(store.tool($0)?.version ?? 0)-\(store.tool($0)?.has_draft == true)" } ?? "new")
+                .frame(height: height - 60)
+                .opacity(expanded ? 1 : 0.001)
+                .allowsHitTesting(expanded)
+        }
+        .frame(height: expanded ? height : 60, alignment: .top)
+        .background(RoundedRectangle(cornerRadius: expanded ? 20 : 30, style: .continuous).fill(Amber.sheet))
+        .clipShape(RoundedRectangle(cornerRadius: expanded ? 20 : 30, style: .continuous))
+        .overlay(RoundedRectangle(cornerRadius: expanded ? 20 : 30, style: .continuous).strokeBorder(Amber.hairline, lineWidth: 1))
+        .shadow(color: .black.opacity(0.06), radius: 12, y: 4)
+        .contentShape(Rectangle())
+        .onTapGesture { if !expanded { open() } }
+        .animation(.spring(response: 0.45, dampingFraction: 0.86), value: expanded)
+    }
+
+    private var header: some View {
+        HStack(spacing: 10) {
+            ZStack {
+                Circle().fill(Amber.wash).frame(width: 36, height: 36)
+                if building {
+                    ProgressView().controlSize(.small)
+                } else {
+                    Image(systemName: "eye").font(.system(size: 15, weight: .semibold)).foregroundStyle(Amber.ink)
+                }
+            }
+            VStack(alignment: .leading, spacing: 1) {
+                Text("Preview").font(Amber.font(17, .heavy)).foregroundStyle(Amber.ink)
+                Text(status).font(Amber.font(14)).foregroundStyle(building ? Amber.link : Amber.muted)
+                    .lineLimit(1).contentTransition(.opacity)
+                    .animation(.easeOut(duration: 0.2), value: status)
+            }
+            Spacer(minLength: 8)
+            if expanded {
+                if let slug, !building {
+                    Button {
+                        if let url = store.openURL(slug, draft: store.tool(slug)?.has_draft == true) { store.host?.openInRealSafari(url) }
+                    } label: {
+                        Image(systemName: "safari").font(.system(size: 16, weight: .semibold)).foregroundStyle(Amber.ink)
+                            .frame(width: 36, height: 36).background(Circle().fill(Amber.wash))
+                    }
+                    .accessibilityLabel("Open in Safari")
+                }
+                Button { close() } label: {
+                    Image(systemName: "xmark").font(.system(size: 14, weight: .bold)).foregroundStyle(Amber.ink)
+                        .frame(width: 36, height: 36).background(Circle().fill(Amber.wash))
+                }
+                .accessibilityLabel("Close preview")
+            } else {
+                Image(systemName: "chevron.down").font(.system(size: 14, weight: .bold)).foregroundStyle(Amber.muted)
+            }
+        }
+        .padding(.horizontal, 12)
+        .frame(height: 60)
+    }
+
+    private var status: String {
+        if building { return store.doing[key] ?? "Starting" }
+        if let slug, store.tool(slug)?.has_draft == true { return "Your change, not published yet" }
+        if let slug, store.unpublished.contains(slug) { return "Only you have it until you publish" }
+        return "Live for the chat"
+    }
+
+    private func open() {
+        UIImpactFeedbackGenerator(style: .soft).impactOccurred()
+        store.host?.expand()
+        expanded = true
+    }
+
+    private func close() {
+        UIImpactFeedbackGenerator(style: .soft).impactOccurred()
+        expanded = false
+    }
+}
+
+/// A web view for either a live URL or the half-written page while it is
+/// being built. The half-written page is reloaded only when enough new has
+/// arrived, so it grows in steps instead of flickering on every word.
+struct WebFrame: UIViewRepresentable {
+    let url: URL?
+    var html: String? = nil
+
+    final class Coordinator { var lastLength = 0; var loadedURL: URL? }
+    func makeCoordinator() -> Coordinator { Coordinator() }
+
+    func makeUIView(context: Context) -> WKWebView {
+        let view = WKWebView()
+        view.isOpaque = false
+        view.backgroundColor = UIColor(Amber.paper)
+        view.scrollView.contentInsetAdjustmentBehavior = .never
+        return view
+    }
+
+    func updateUIView(_ view: WKWebView, context: Context) {
+        if let html {
+            guard html.count - context.coordinator.lastLength > 600 || context.coordinator.lastLength == 0 else { return }
+            context.coordinator.lastLength = html.count
+            view.loadHTMLString(html, baseURL: API.base)
+        } else if let url, url != context.coordinator.loadedURL {
+            context.coordinator.loadedURL = url
+            view.load(URLRequest(url: url))
+        }
+    }
+}
