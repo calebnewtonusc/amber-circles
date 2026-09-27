@@ -7,3 +7,4 @@ node_modules/
 public/.design-gate-url
 ios/build/
 ios/*.xcodeproj/xcuserdata/
+ios/build-device/
