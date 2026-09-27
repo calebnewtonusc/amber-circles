@@ -12,7 +12,9 @@
   --ink: #201f1d;
   --body: #3f3d3b;
   --muted: #605d5d;
-  --muted-soft: #8a8683;
+  /* #8a8683 failed WCAG AA at 3.2 to 3.4:1 under axe (2026-09-27), on exactly
+     the small grey labels older eyes miss. #706c69 clears 4.65:1 on every ground. */
+  --muted-soft: #706c69;
   --hairline: color-mix(in srgb, #201f1d 14%, transparent);
   --hairline-strong: color-mix(in srgb, #201f1d 28%, transparent);
 
@@ -211,7 +213,7 @@ a:hover {
   padding: var(--space-7) 0 var(--space-5);
   border-bottom: 1px solid var(--hairline);
 }
-.masthead h2 {
+.masthead h1, .masthead h2 {
   font-size: clamp(30px, 4vw, 44px);
   line-height: 1.05;
   letter-spacing: -0.02em;
@@ -1084,3 +1086,5 @@ body { font-size: 1rem; }
   .person-actions { width: 100%; margin-left: 46px; }
 }
 .card > .people { border-top: 0; }
+
+.card h2.card-title { font-size: 22px; margin-bottom: var(--space-2); }

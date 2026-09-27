@@ -396,7 +396,7 @@ async function dashboard() {
   app.innerHTML = shell(
     "tools",
     `
-    <div class="masthead"><div><p class="kicker">Your tools</p><h2>What your circles are using</h2></div>
+    <div class="masthead"><div><p class="kicker">Your tools</p><h1>What your circles are using</h1></div>
     <a class="btn btn-primary" href="/make" data-link>${icon("plus")} Make something</a></div>
     <div id="requests"></div>
     <div id="tools" class="mt-4">${skeletonGrid()}</div>
@@ -471,7 +471,7 @@ async function circlesPage() {
   app.innerHTML = shell(
     "circles",
     `
-    <div class="masthead"><div><p class="kicker">Circles</p><h2>Who your tools are for</h2><p class="lede">A circle is the permission. Share a tool with one and only those people can open it, each through their own link.</p></div></div>
+    <div class="masthead"><div><p class="kicker">Circles</p><h1>Who your tools are for</h1><p class="lede">A circle is the permission. Share a tool with one and only those people can open it, each through their own link.</p></div></div>
     <div class="split">
       <div id="circle-list">${skeletonGrid(2)}</div>
       <form class="sheet stack" id="new-circle">
@@ -524,7 +524,9 @@ async function circlesPage() {
 }
 
 function personRow(member, { link, message, removable }) {
-  const sms = member.phone
+  // Only a row that carries a link can text one. The circle page has no tool
+  // in hand, and once sent the literal word "undefined" (2026-09-27).
+  const sms = member.phone && link && message
     ? `sms:${encodeURIComponent(member.phone)}?&body=${encodeURIComponent(message)}`
     : null;
   return `
@@ -532,7 +534,7 @@ function personRow(member, { link, message, removable }) {
       <div class="avatar" aria-hidden="true">${esc(initials(member.name))}</div>
       <div class="who"><b>${esc(member.name)}${member.is_owner ? ' <span class="tag tag-neutral tag-xs">you</span>' : ""}</b><span>${esc(formatPhone(member.phone) || "No phone number yet")}</span></div>
       <div class="person-actions">
-        ${sms && !member.is_owner ? `<a class="btn btn-sm btn-primary" href="${esc(sms)}">${icon("message", "icon-sm")} Text ${esc(member.name.split(" ")[0])}</a>` : ""}
+        ${sms && link && message && !member.is_owner ? `<a class="btn btn-sm btn-primary" href="${esc(sms)}">${icon("message", "icon-sm")} Text ${esc(member.name.split(" ")[0])}</a>` : ""}
         ${link ? `<button class="btn btn-sm btn-ghost" data-copy="${esc(link)}" aria-label="Copy ${esc(member.name)}'s link">${icon("copy", "icon-sm")} Copy link</button>` : ""}
         ${removable && !member.is_owner ? `<button class="btn btn-sm btn-ghost" data-remove="${esc(member.id)}" aria-label="Remove ${esc(member.name)}">${icon("trash", "icon-sm")}</button>` : ""}
       </div>
@@ -568,10 +570,10 @@ async function circlePage(id) {
     const tools = data.tools.filter((tool) => tool.circle_id === id);
     app.querySelector("main").innerHTML = `
       <a class="btn btn-ghost btn-sm" href="/circles" data-link>${icon("back", "icon-sm")} Circles</a>
-      <div class="masthead mt-3"><div><p class="kicker">Circle</p><h2>${esc(circle.name)}</h2></div></div>
-      <div class="grid items-start">
+      <div class="masthead mt-3"><div><p class="kicker">Circle</p><h1>${esc(circle.name)}</h1></div></div>
+      <div class="split">
         <div class="card">
-          <h3 class="mt-0">People</h3>
+          <h2 class="card-title mt-0">People</h2>
           <div class="people">${circle.members.map((member) => personRow(member, { removable: true })).join("")}</div>
           <form class="row mt-4" id="add-member">
             <label class="skip" for="member-name">Name</label>
@@ -583,7 +585,7 @@ async function circlePage(id) {
           <p class="error-text" id="member-error" role="alert"></p>
         </div>
         <div class="card">
-          <h3 class="mt-0">Tools shared here</h3>
+          <h2 class="card-title mt-0">Tools shared here</h2>
           ${
             tools.length
               ? `<div class="people">${tools
@@ -653,7 +655,7 @@ async function sharePage(slug) {
       `${data.base}/t/${tool.slug}#m=${encodeURIComponent(member.token)}`;
     app.querySelector("main").innerHTML = `
       <a class="btn btn-ghost btn-sm" href="/" data-link>${icon("back", "icon-sm")} Tools</a>
-      <div class="masthead mt-3"><div><p class="kicker">Share · ${esc(circle.name)}</p><h2>${esc(tool.title)}</h2>
+      <div class="masthead mt-3"><div><p class="kicker">Share · ${esc(circle.name)}</p><h1>${esc(tool.title)}</h1>
       <p class="lede mt-1">Tap Text next to each person. Their phone gets their own link, and the tool will know who they are. Nobody outside ${esc(circle.name)} can open it.</p></div></div>
       <div class="card">
         <div class="people">${circle.members
@@ -695,7 +697,7 @@ async function newToolPage() {
       return;
     }
     app.querySelector("main").innerHTML = `
-      <div class="masthead"><div><p class="kicker">Publish</p><h2>Put a tool in front of a circle</h2>
+      <div class="masthead"><div><p class="kicker">Publish</p><h1>Put a tool in front of a circle</h1>
       <p class="lede mt-1">The fastest way is to <a href="/connect" data-link>connect Claude</a> and ask. This page is for pasting a file an agent already wrote.</p></div></div>
       <form class="card stack" id="publish">
         <div class="grid gap-3">
@@ -759,18 +761,18 @@ async function connectPage() {
   app.innerHTML = shell(
     "connect",
     `
-    <div class="masthead"><div><p class="kicker">Connect Claude</p><h2>Let your agent publish for you</h2>
+    <div class="masthead"><div><p class="kicker">Connect Claude</p><h1>Let your agent publish for you</h1>
     <p class="lede mt-1">Once Claude is connected, you describe the tool and Claude builds it, publishes it here, and shares it with the circle you name.</p></div></div>
     <div class="grid items-start">
       <div class="card stack">
         <p class="kicker">Claude, the app</p>
-        <h3 class="m-0">Add a custom connector</h3>
+        <h2 class="card-title m-0">Add a custom connector</h2>
         <p class="desc">Settings, then Connectors, then Add custom connector. Paste this URL. It is your private key, so do not post it anywhere.</p>
         <div class="code-block"><code>${esc(mcp)}</code><button class="btn btn-sm btn-ghost" data-copy="${esc(mcp)}">${icon("copy", "icon-sm")} Copy</button></div>
       </div>
       <div class="card stack">
         <p class="kicker">Claude Code</p>
-        <h3 class="m-0">One command</h3>
+        <h2 class="card-title m-0">One command</h2>
         <div class="code-block"><code>${esc(claudeCode)}</code><button class="btn btn-sm btn-ghost" data-copy="${esc(claudeCode)}">${icon("copy", "icon-sm")} Copy</button></div>
       </div>
       <div class="card stack">
@@ -780,7 +782,7 @@ async function connectPage() {
       </div>
       <div class="card stack">
         <p class="kicker">Your other phone or computer</p>
-        <h3 class="m-0">Your sign-in link</h3>
+        <h2 class="card-title m-0">Your sign-in link</h2>
         <p class="desc">Open this on another device to use Amber there. Anyone with it can manage your groups, so keep it to yourself.</p>
         <div class="code-block"><code>${esc(signInLink)}</code><button class="btn btn-sm btn-ghost" data-copy="${esc(signInLink)}">${icon("copy", "icon-sm")} Copy</button></div>
       </div>
@@ -1065,7 +1067,7 @@ async function makePage() {
     return bindRetry();
   }
   app.querySelector("main").innerHTML = `
-    <div class="masthead"><div><p class="kicker">Make something</p><h2>What do you want to make?</h2>
+    <div class="masthead"><div><p class="kicker">Make something</p><h1>What do you want to make?</h1>
     <p class="lede">Say it the way you would say it to a friend. Claude builds it, and only the people you choose can open it.</p></div></div>
     <form id="make" class="make">
       <label class="skip" for="make-request">What you want</label>
@@ -1144,7 +1146,7 @@ async function toolPage(slug) {
   const others = circle.members.filter((member) => !member.is_owner);
   const notYet = others.filter((member) => !(tool.opened_by || []).includes(member.id)).map((member) => member.name.split(" ")[0]);
   app.querySelector("main").innerHTML = `
-    <div class="masthead"><div><p class="kicker">${esc(circle.name)}</p><h2>${esc(tool.title)}</h2></div>
+    <div class="masthead"><div><p class="kicker">${esc(circle.name)}</p><h1>${esc(tool.title)}</h1></div>
       <div class="row"><a class="btn" href="/t/${esc(slug)}#m=${encodeURIComponent(token)}">${icon("open", "icon-sm")} Full screen</a><a class="btn btn-primary" href="/share/${esc(slug)}" data-link>${icon("share", "icon-sm")} Send to ${esc(circle.name)}</a></div>
     </div>
     <div class="workspace">

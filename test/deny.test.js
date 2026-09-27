@@ -73,7 +73,7 @@ test("one hue: every colour literal is ink, gold or a state colour", () => {
     "#201f1d",
     "#3f3d3b",
     "#605d5d",
-    "#8a8683",
+    "#706c69",
     "#fff3e4",
     "#ffe3bf",
     "#facb8d",
