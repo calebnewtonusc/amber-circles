@@ -82,6 +82,13 @@ test("the whole flow: owner, circle, publish, member, outsider, bridge, frame, m
   const openedBy = (await call("/api/owner", { owner })).json.tools.find((t) => t.slug === slug).opened_by;
   assert.deepEqual(openedBy, [maya.id], "the owner can see exactly who has opened it");
 
+  // The owner previewing their own tool is not an open by the group.
+  const before = (await call("/api/owner", { owner })).json.tools.find((t) => t.slug === slug).last_open;
+  await call(`/api/run/${slug}`, { member: me.token });
+  const after = (await call("/api/owner", { owner })).json.tools.find((t) => t.slug === slug);
+  assert.deepEqual(after.opened_by, [maya.id], "the owner's preview is not counted");
+  assert.equal(after.last_open, before, "the owner's preview does not move last opened");
+
   // An outsider is turned away, and told who to ask.
   const outsider = await call(`/api/run/${slug}`, {
     member: "not-a-real-token",

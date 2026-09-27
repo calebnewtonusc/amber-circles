@@ -795,10 +795,15 @@ app.get("/api/run/:slug", async (c) => {
       403,
     );
   }
-  await pool.query("insert into opens (tool_id, member_id) values ($1, $2)", [
-    access.tool_id,
-    access.member_id,
-  ]);
+  // The owner's own previews are not the group receiving it. Counting them
+  // made "last opened" read "just now" every time the owner's tools page drew
+  // its live thumbnails (2026-09-27).
+  if (!access.is_owner) {
+    await pool.query("insert into opens (tool_id, member_id) values ($1, $2)", [
+      access.tool_id,
+      access.member_id,
+    ]);
+  }
   return c.json({
     tool: {
       title: access.title,

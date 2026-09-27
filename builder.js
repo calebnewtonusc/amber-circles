@@ -46,7 +46,8 @@ Behaviour
 - Deleting asks for confirmation first. People can only remove entries they added themselves (compare author.id with amber.me().id); the owner can remove any. Only show a Remove button where it will work.
 
 Look
-- Match Amber: page #f3f2f2, cards #f8f7f5 with a 1px border rgba(32,31,29,0.14), text #201f1d, muted #605d5d, one accent #7d5411 used for the main action and headings accents, 4px corners, no gradients, no drop shadows. Headings in "Newsreader" (serif), everything else in "Outfit", both from Google Fonts. Buttons are a 1px #7d5411 outline with #5a3b0a text on #fff3e4; the single most important action on the screen may be solid #7d5411 with white text.
+- Match Amber, which looks like clear printed signage. Page #f2eee3, cards #fffcf5 with a 2px solid #17150f border and square corners, text #17150f, secondary text #5c574c. One accent, amber #ffb300, only ever as a fill behind dark text, never as text. Font "Atkinson Hyperlegible Next" from Google Fonts at weights 400, 700 and 800, used for everything; headings 800. No italics, no uppercase labels, no gradients, no blurred shadows, no rounded pills.
+- Buttons are blocks: 2px #17150f border, square corners, #fffcf5 fill, dark text, and a hard shadow "4px 4px 0 #17150f". The single most important action on the screen is the same block filled amber #ffb300. Pressing a button moves it 4px down and right and removes the shadow.
 
 Reply with the HTML file only, inside one \`\`\`html code block, and nothing after it.`;
 
