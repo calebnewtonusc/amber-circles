@@ -7,8 +7,8 @@ CAPTION_JS = """(text) => {
   if (!el) {
     el = document.createElement('div'); el.id='__cap';
     Object.assign(el.style, {position:'fixed', left:'50%', bottom:'28px', transform:'translateX(-50%)', zIndex:'99999',
-      background:'#201f1d', color:'#fffdf7', font:'500 22px/1.3 Outfit, sans-serif', padding:'14px 22px', borderRadius:'4px',
-      maxWidth:'80vw', textAlign:'center', letterSpacing:'-0.005em', transition:'opacity 200ms ease-out'});
+      background:'#17150f', color:'#fffcf5', font:'700 24px/1.3 "Atkinson Hyperlegible Next", sans-serif', padding:'14px 22px',
+      border:'2px solid #17150f', boxShadow:'4px 4px 0 #ffb300', maxWidth:'80vw', textAlign:'center', transition:'opacity 200ms ease-out'});
     document.body.appendChild(el);
   }
   el.style.opacity = text ? '1' : '0';
