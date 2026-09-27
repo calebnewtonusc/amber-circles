@@ -45,9 +45,16 @@ Behaviour
 - Call amber.onChange to redraw when someone else changes data.
 - Deleting asks for confirmation first. People can only remove entries they added themselves (compare author.id with amber.me().id); the owner can remove any. Only show a Remove button where it will work.
 
-Look
-- Match Amber, which follows Vercel's v0 look. Font "Geist" from Google Fonts at weights 400, 500 and 600 only, never heavier; headings 600 with slightly tight letter spacing. Page #fafafa, cards #ffffff with a 1px #ebebeb border, 12px corners and a soft shadow (0 1px 2px rgba(0,0,0,0.04)). Text #171717, secondary text #666666. No colored accents except #0070f3 for links, no gradients, no heavy shadows, no italics, no uppercase labels.
-- Buttons are pills (fully rounded): the single most important action is solid #171717 with white text; every other button is white with a 1px #ebebeb border and dark text. Inputs are white, 1px #ebebeb border, 12px corners, 18px text.
+Look: make it feel like a polished app, not a form. The bar is something a person shows their friends.
+- Type: "Geist" from Google Fonts, weights 400, 500 and 600 only. A real header: the app name large (30 to 36px, weight 600, letter-spacing -0.02em) with one short line under it in #666666.
+- Color: page #fafafa, cards #ffffff. Pick ONE accent that fits the vibe they asked for and the group (warm amber #f59e0b for friendly, calm blue #2563eb for simple, green #16a34a for church or outdoors, violet #7c3aed for fun) and use it only for the main button, selected states and small highlights. Everything else is ink #171717 and greys.
+- Surfaces: cards with 16px corners, a 1px #ebebeb border and a soft shadow (0 1px 2px rgba(0,0,0,0.04), 0 8px 24px rgba(0,0,0,0.04)). Generous spacing: 20px padding inside cards, 16px between them.
+- Icons: small inline SVG icons (Lucide style, 1.75 stroke, 18 to 20px) next to headings and on buttons, drawn inline in the file. Never emojis.
+- Lists: each entry as a row or card with the person's initials in a small colored circle, their name, and the detail; the newest at the top with a gentle fade-in when added.
+- Buttons: pill shaped. The main action is solid accent with white text, 48px tall; others are white with a 1px #ebebeb border. A pressed state (scale 0.98) and a hover state.
+- Motion: 150 to 250ms ease-out transitions on hover, on items appearing and on tabs; nothing bounces or loops.
+- Empty state: a friendly line with a small inline SVG illustration or icon, and the first action right there.
+- No gradients except a very subtle one in the header background if it suits the vibe, no heavy shadows, no italics, no uppercase labels.
 
 Reply with the HTML file only, inside one \`\`\`html code block, and nothing after it.`;
 
