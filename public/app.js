@@ -64,6 +64,13 @@ function timeAgo(iso) {
   return `${Math.round(hours / 24)}d ago`;
 }
 
+function formatPhone(phone) {
+  const digits = String(phone || "").replace(/\D/g, "");
+  const local = digits.length === 11 && digits.startsWith("1") ? digits.slice(1) : digits;
+  if (local.length !== 10) return phone || "";
+  return `(${local.slice(0, 3)}) ${local.slice(3, 6)}-${local.slice(6)}`;
+}
+
 function toast(message) {
   toastEl.textContent = message;
   toastEl.classList.add("show");
@@ -415,7 +422,7 @@ function personRow(member, { link, message, removable }) {
   return `
     <div class="person">
       <div class="avatar" aria-hidden="true">${esc(initials(member.name))}</div>
-      <div class="who"><b>${esc(member.name)}${member.is_owner ? ' <span class="tag tag-neutral tag-xs">you</span>' : ""}</b><span>${esc(member.phone || "no phone, copy the link instead")}</span></div>
+      <div class="who"><b>${esc(member.name)}${member.is_owner ? ' <span class="tag tag-neutral tag-xs">you</span>' : ""}</b><span>${esc(formatPhone(member.phone) || "no phone, copy the link instead")}</span></div>
       <span class="spacer"></span>
       ${link ? `<button class="btn btn-sm btn-ghost" data-copy="${esc(link)}" aria-label="Copy ${esc(member.name)}'s link">${icon("copy", "icon-sm")} Copy link</button>` : ""}
       ${sms && !member.is_owner ? `<a class="btn btn-sm" href="${esc(sms)}">${icon("message", "icon-sm")} Text</a>` : ""}
@@ -714,6 +721,22 @@ async function runner(slug) {
     </header>
     <iframe class="run-frame" title="${esc(session.tool.title)}" sandbox="allow-scripts allow-forms allow-modals" src="/frame/${encodeURIComponent(slug)}?ticket=${encodeURIComponent(session.ticket)}"></iframe>`;
   const frame = app.querySelector("iframe");
+
+  // CSP closes fetch, images and forms, but no browser lets a page stop a
+  // sandboxed frame from navigating ITSELF, which is the one way left to carry
+  // data out in a URL. A tool loads exactly once; a second load means it tried
+  // to leave, so the frame is torn down and the person is told why.
+  let frameLoads = 0;
+  frame.addEventListener("load", () => {
+    frameLoads += 1;
+    if (frameLoads < 2) return;
+    frame.remove();
+    clearInterval(poller);
+    app.insertAdjacentHTML(
+      "beforeend",
+      `<div class="page pt-run">${stateView({ glyph: "lock", title: "This tool tried to leave Amber", body: "Tools can only talk to your circle through Amber, so we closed it. Tell the circle owner." })}</div>`,
+    );
+  });
 
   // The stamp is how the frame hears about other people's changes: a cheap
   // poll while the tab is visible, then a nudge into the tool.
