@@ -852,6 +852,27 @@ app.post("/mcp/:key", async (c) => {
   }
 });
 
+// Deleting an account removes every circle, tool, member link and saved
+// entry it owns, through the schema's cascades. Nothing is kept.
+app.delete("/api/owner", async (c) => {
+  const owner = await requireOwner(c);
+  await pool.query("delete from owners where id = $1", [owner.id]);
+  return c.json({ ok: true });
+});
+
+// "Make my own copy", the Google Docs template move: someone who can see a
+// tool, and has an Amber account of their own, copies the tool without its
+// data into one of their circles. The member link proves they can see it.
+app.post("/api/run/:slug/copy", async (c) => {
+  const owner = await requireOwner(c);
+  const access = await memberForTool(c.req.param("slug"), c.req.header("x-amber-member"));
+  if (!access?.member_id) throw new HttpError(403, "You can only copy a tool you can open.");
+  const body = await c.req.json();
+  const { rows } = await pool.query("select title, description, html from tools where slug = $1", [c.req.param("slug")]);
+  const result = await publishTool(owner, { title: rows[0].title, description: rows[0].description, circle: body.circle, html: rows[0].html, request: `A copy of ${rows[0].title}` });
+  return c.json(result);
+});
+
 // ---------- the builder, versions, and asking to be let in ----------
 
 // Guessed, never measured: every build spends real money on the owner's key,

@@ -6,6 +6,21 @@ import assert from "node:assert/strict";
 
 const BASE = process.env.AMBER_URL || "http://localhost:8787";
 
+// Every owner a test creates is deleted afterwards, so running this against
+// production leaves nothing behind. It did once: 2026-09-27, four test owners.
+const created = [];
+import { after } from "node:test";
+after(async () => {
+  await Promise.all(
+    created.map((key) =>
+      fetch(`${BASE}/api/owner`, {
+        method: "DELETE",
+        headers: { authorization: `Bearer ${key}` },
+      }),
+    ),
+  );
+});
+
 async function call(path, { method = "GET", body, owner, member } = {}) {
   const headers = { "content-type": "application/json" };
   if (owner) headers.authorization = `Bearer ${owner}`;
@@ -15,11 +30,76 @@ async function call(path, { method = "GET", body, owner, member } = {}) {
     headers,
     body: body ? JSON.stringify(body) : undefined,
   });
-  return {
-    status: response.status,
-    json: await response.json().catch(() => null),
-  };
+  const json = await response.json().catch(() => null);
+  if (path === "/api/owners" && method === "POST" && json?.key)
+    created.push(json.key);
+  return { status: response.status, json };
 }
+
+test("a tool can be copied, without its data, by someone who can open it", async () => {
+  const stan = (
+    await call("/api/owners", { method: "POST", body: { name: "Stan" } })
+  ).json.key;
+  await call("/api/circles", {
+    method: "POST",
+    owner: stan,
+    body: { name: "Class", members: [{ name: "Ruth" }] },
+  });
+  const { circles } = (await call("/api/owner", { owner: stan })).json;
+  const { slug } = (
+    await call("/api/tools", {
+      method: "POST",
+      owner: stan,
+      body: { title: "Prayers", circle: circles[0].id, html: page("x") },
+    })
+  ).json;
+  const ruthToken = circles[0].members.find((m) => m.name === "Ruth").token;
+  await call(`/api/run/${slug}/rpc`, {
+    method: "POST",
+    member: ruthToken,
+    body: { op: "add", collection: "prayers", data: { text: "secret" } },
+  });
+
+  const ruth = (
+    await call("/api/owners", { method: "POST", body: { name: "Ruth" } })
+  ).json.key;
+  const mine = (
+    await call("/api/circles", {
+      method: "POST",
+      owner: ruth,
+      body: { name: "My family" },
+    })
+  ).json;
+  const copy = await call(`/api/run/${slug}/copy`, {
+    method: "POST",
+    owner: ruth,
+    member: ruthToken,
+    body: { circle: mine.id },
+  });
+  assert.equal(copy.status, 200);
+  const hers = (await call("/api/owner", { owner: ruth })).json.tools;
+  assert.equal(hers.length, 1);
+  assert.equal(hers[0].record_count, 0, "the copy carries no data");
+
+  // Without a link that opens the original, there is nothing to copy.
+  assert.equal(
+    (
+      await call(`/api/run/${slug}/copy`, {
+        method: "POST",
+        owner: ruth,
+        member: "nope",
+        body: { circle: mine.id },
+      })
+    ).status,
+    403,
+  );
+  // Deleting an account removes its tools.
+  assert.equal(
+    (await call("/api/owner", { method: "DELETE", owner: ruth })).status,
+    200,
+  );
+  assert.equal((await call("/api/owner", { owner: ruth })).status, 401);
+});
 
 const page = (text) =>
   `<!doctype html><html><head><title>t</title></head><body><p>${text}</p></body></html>`;

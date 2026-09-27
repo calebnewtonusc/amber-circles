@@ -6,6 +6,14 @@ import assert from "node:assert/strict";
 
 const BASE = process.env.AMBER_URL || "http://localhost:8787";
 
+// Every owner a test creates is deleted afterwards, so running this against
+// production leaves nothing behind. It did once: 2026-09-27, four test owners.
+const created = [];
+import { after } from "node:test";
+after(async () => {
+  await Promise.all(created.map((key) => fetch(`${BASE}/api/owner`, { method: "DELETE", headers: { authorization: `Bearer ${key}` } })));
+});
+
 async function call(path, { method = "GET", body, owner, member } = {}) {
   const headers = { "content-type": "application/json" };
   if (owner) headers.authorization = `Bearer ${owner}`;
@@ -22,6 +30,7 @@ async function call(path, { method = "GET", body, owner, member } = {}) {
   } catch {
     /* html or empty */
   }
+  if (path === "/api/owners" && method === "POST" && json?.key) created.push(json.key);
   return { status: response.status, json, text, headers: response.headers };
 }
 

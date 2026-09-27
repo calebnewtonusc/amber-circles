@@ -863,8 +863,37 @@ async function runner(slug) {
       <span class="run-title">${esc(session.tool.title)}</span>
       <span class="tag">${icon("users", "icon-sm")} ${esc(session.circle)}</span>
       <span class="run-me">You're ${esc(session.me.name.split(" ")[0])}</span>
+      ${isOwnerHere ? "" : `<button class="btn btn-sm btn-ghost" id="copy-tool">Make your own</button>`}
     </header>`;
   activeCleanup = mountTool({ container: app, slug, token, session });
+  app.querySelector("#copy-tool")?.addEventListener("click", () => copyTool(slug, token, session));
+}
+
+// "Make your own", the Google Docs copy: the tool without its data, into one
+// of the viewer's own groups. Someone with no Amber account is sent to start
+// one, which is how a shared tool brings its circle into Amber.
+async function copyTool(slug, token, session) {
+  if (!store.get(OWNER_KEY)) {
+    toast(`Start your own group, then come back to copy ${session.tool.title}.`);
+    setTimeout(() => navigate("/"), 1400);
+    return;
+  }
+  try {
+    const { circles } = await loadOverview(true);
+    if (!circles.length) {
+      toast("Make a group first, then copy it into that group.");
+      return navigate("/circles");
+    }
+    const names = circles.map((circle, index) => `${index + 1}. ${circle.name}`).join("\n");
+    const pick = circles.length === 1 ? 1 : Number(prompt(`Copy ${session.tool.title} into which group?\n${names}`, "1"));
+    const circle = circles[pick - 1];
+    if (!circle) return;
+    const copied = await api(`/api/run/${slug}/copy`, { method: "POST", member: token, body: { circle: circle.id } });
+    toast(`Copied into ${circle.name}. None of this group's entries came with it.`);
+    navigate(`/tools/${copied.slug}`);
+  } catch (error) {
+    toast(error.message);
+  }
 }
 
 // The Google Docs "Request access" flow: someone opens a tool they were not
