@@ -227,6 +227,14 @@ async function loadOverview(force = false) {
   return overview;
 }
 
+// Who, besides the owner, has opened a tool. The owner's own previews are
+// not the group receiving it, so they never count toward "opened".
+function openedCount(tool, circle) {
+  const others = (circle?.members || []).filter((member) => !member.is_owner);
+  const opened = others.filter((member) => (tool.opened_by || []).includes(member.id)).length;
+  return { opened, of: others.length };
+}
+
 function ownerToken(circleId) {
   const circle = overview?.circles.find((entry) => entry.id === circleId);
   return circle?.members.find((member) => member.is_owner)?.token;
@@ -410,14 +418,13 @@ async function dashboard() {
         ${data.tools
           .map((tool) => {
             const circle = data.circles.find((entry) => entry.id === tool.circle_id);
-            const size = circle?.members.length || 0;
             const token = ownerToken(tool.circle_id);
             const open = `/t/${esc(tool.slug)}${token ? `#m=${encodeURIComponent(token)}` : ""}`;
             return `
             <div class="ledger-row ledger-tools">
               <div><a class="title" href="/tools/${esc(tool.slug)}" data-link>${esc(tool.title)}</a><p class="sub">${esc(tool.description || "No description yet.")}</p></div>
               <div class="tag">${icon("users", "icon-sm")} ${esc(tool.circle_name)}</div>
-              <div class="num"><span class="cell-label">Opened</span>${tool.people_opened}<small> of ${size}</small></div>
+              <div class="num"><span class="cell-label">Opened</span>${openedCount(tool, circle).opened}<small> of ${openedCount(tool, circle).of}</small></div>
               <div class="num"><span class="cell-label">Entries</span>${tool.record_count}</div>
               <div class="num"><span class="cell-label">Last open</span><small>${timeAgo(tool.last_open)}</small></div>
               <div class="actions"><a class="btn btn-sm" href="/share/${esc(tool.slug)}" data-link>${icon("share", "icon-sm")} Links</a><a class="btn btn-sm btn-primary" href="/tools/${esc(tool.slug)}" data-link>Open</a></div>
@@ -569,7 +576,7 @@ async function circlePage(id) {
               ? `<div class="people">${tools
                   .map(
                     (tool) => `
-            <div class="person"><div class="who"><b>${esc(tool.title)}</b><span>${tool.people_opened} of ${circle.members.length} opened</span></div><span class="spacer"></span><a class="btn btn-sm" href="/share/${esc(tool.slug)}" data-link>Share links</a></div>`,
+            <div class="person"><div class="who"><b>${esc(tool.title)}</b><span>${openedCount(tool, circle).opened} of ${openedCount(tool, circle).of} opened</span></div><span class="spacer"></span><a class="btn btn-sm" href="/share/${esc(tool.slug)}" data-link>Share links</a></div>`,
                   )
                   .join("")}</div>`
               : `<p class="desc mb-4">Nothing yet. Ask Claude to build something for ${esc(circle.name)}.</p><a class="btn btn-primary" href="/new?circle=${esc(circle.id)}" data-link>${icon("plus")} Publish a tool</a>`
