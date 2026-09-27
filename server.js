@@ -1437,6 +1437,26 @@ app.post("/api/tools/:slug/talk", async (c) => {
   return c.json(await talk({ title: tool.title, html: tool.html, text, notes: notes.map((n) => n.text) }));
 });
 
+// Amber says its replies out loud, so talking to a tool is a conversation
+// and not a chat log (Caleb, 2026-09-27: "voice powered conversational UX").
+// The ElevenLabs key never leaves the server. Alice was picked from the
+// account's voices for being described as clear, which is what older ears
+// need more than warmth or drama.
+const VOICE_ID = process.env.AMBER_VOICE_ID || "Xb7hH8MSUJpSbSDYk0k2";
+app.post("/api/speak", async (c) => {
+  await requireOwner(c);
+  if (!process.env.ELEVENLABS_API_KEY) throw new HttpError(503, "Amber's voice is not switched on here.");
+  const body = await c.req.json().catch(() => ({}));
+  const text = requireText(body.text, "text", 700);
+  const response = await fetch(`https://api.elevenlabs.io/v1/text-to-speech/${VOICE_ID}?output_format=mp3_44100_64`, {
+    method: "POST",
+    headers: { "xi-api-key": process.env.ELEVENLABS_API_KEY, "content-type": "application/json", accept: "audio/mpeg" },
+    body: JSON.stringify({ text, model_id: "eleven_flash_v2_5" }),
+  });
+  if (!response.ok) throw new HttpError(502, "Amber could not say that out loud just now.");
+  return new Response(response.body, { headers: { "content-type": "audio/mpeg", "cache-control": "no-store" } });
+});
+
 // What a waiting change does, in plain words, so the person knows what to
 // look for before they try it.
 app.get("/api/tools/:slug/draft-summary", async (c) => {

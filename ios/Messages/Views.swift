@@ -14,7 +14,7 @@ struct RootView: View {
             } else {
                 switch store.route {
                 case .home: HomeView()
-                case .tool(let slug): ToolView(slug: slug)
+                case .tool(let slug): ToolView(slug: slug, speaker: store.speaker)
                 }
             }
         }
@@ -225,6 +225,12 @@ struct ToolView: View {
     @State private var note = ""
     @State private var showing: URL?
     @State private var copied = false
+    @ObservedObject private var speaker: Speaker
+
+    init(slug: String, speaker: Speaker) {
+        self.slug = slug
+        self.speaker = speaker
+    }
     @FocusState private var focused: Bool
     @FocusState private var noteFocused: Bool
 
@@ -241,6 +247,10 @@ struct ToolView: View {
                         if let by = tool.made_by { Text("Made by \(by)").font(Amber.font(17, .bold)).foregroundStyle(Amber.body) }
                     }
                     ErrorLine()
+                    LivePreview(url: store.openURL(slug, draft: tool.has_draft), label: tool.has_draft ? "Your change, not kept yet" : "Live now") {
+                        showing = store.openURL(slug, draft: tool.has_draft)
+                    }
+                    .id("\(tool.version)-\(tool.has_draft)")
                     section("What it is") {
                         Text(explanation ?? "Reading it so it can explain itself…")
                             .font(Amber.font(19)).foregroundStyle(explanation == nil ? Amber.muted : Amber.ink)
@@ -254,7 +264,17 @@ struct ToolView: View {
                             .buttonStyle(BlockButton(full: true))
                     }
                     liveLink
-                    section("Talk to it") { conversation(tool) }
+                    VStack(alignment: .leading, spacing: 12) {
+                        HStack {
+                            Text("Talk to it").font(Amber.font(22, .heavy)).foregroundStyle(Amber.ink)
+                            Spacer()
+                            Toggle(isOn: $speaker.isOn) {
+                                Text("Amber talks back").font(Amber.font(16, .bold)).foregroundStyle(Amber.body)
+                            }
+                            .toggleStyle(.switch).tint(Amber.present).fixedSize()
+                        }
+                        conversation(tool)
+                    }
                     section("Thoughts from the chat") { thoughts }
                 } else {
                     ProgressView().frame(maxWidth: .infinity, minHeight: 120)
@@ -465,4 +485,41 @@ struct SafariSheet: UIViewControllerRepresentable {
         return controller
     }
     func updateUIViewController(_ controller: SFSafariViewController, context: Context) {}
+}
+
+import WebKit
+
+/// The tool itself, running live inside the editor, the way v0 shows the
+/// thing next to the conversation. Tap to open it full screen.
+struct LivePreview: View {
+    let url: URL?
+    let label: String
+    let open: () -> Void
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack {
+                Circle().fill(Amber.present).frame(width: 10, height: 10)
+                Text(label).font(Amber.font(16, .bold)).foregroundStyle(Amber.ink)
+                Spacer()
+                Button("Full screen", action: open).font(Amber.font(16, .bold)).foregroundStyle(Amber.ink).underline()
+            }
+            WebFrame(url: url)
+                .frame(height: 380)
+                .overlay(Rectangle().strokeBorder(Amber.ink, lineWidth: 2))
+                .background(Rectangle().fill(Amber.ink).offset(x: 4, y: 4))
+        }
+    }
+}
+
+struct WebFrame: UIViewRepresentable {
+    let url: URL?
+    func makeUIView(context: Context) -> WKWebView {
+        let view = WKWebView()
+        view.isOpaque = false
+        view.backgroundColor = UIColor(Amber.paper)
+        if let url { view.load(URLRequest(url: url)) }
+        return view
+    }
+    func updateUIView(_ view: WKWebView, context: Context) {}
 }

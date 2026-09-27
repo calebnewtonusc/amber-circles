@@ -42,7 +42,7 @@ final class Listener: ObservableObject {
     private func begin() {
         do {
             let session = AVAudioSession.sharedInstance()
-            try session.setCategory(.record, mode: .measurement, options: .duckOthers)
+            try session.setCategory(.playAndRecord, mode: .default, options: [.defaultToSpeaker, .allowBluetoothHFP, .duckOthers])
             try session.setActive(true, options: .notifyOthersOnDeactivation)
             let request = SFSpeechAudioBufferRecognitionRequest()
             request.shouldReportPartialResults = true
@@ -130,5 +130,44 @@ struct HoldToTalk: View {
                 Text(problem).font(Amber.font(16, .bold)).foregroundStyle(Amber.danger)
             }
         }
+    }
+}
+
+/// Amber's replies, out loud, in the ElevenLabs voice the server picks. A
+/// conversation you can have with your phone at arm's length.
+@MainActor
+final class Speaker: NSObject, ObservableObject, AVAudioPlayerDelegate {
+    @Published var isOn = UserDefaults.standard.object(forKey: "amber.voice") as? Bool ?? true {
+        didSet { UserDefaults.standard.set(isOn, forKey: "amber.voice"); if !isOn { player?.stop() } }
+    }
+    @Published var isSpeaking = false
+    private var player: AVAudioPlayer?
+
+    func say(_ text: String, token: String) async {
+        guard isOn, !text.isEmpty else { return }
+        var request = URLRequest(url: API.base.appendingPathComponent("api/speak"))
+        request.httpMethod = "POST"
+        request.setValue("application/json", forHTTPHeaderField: "content-type")
+        request.setValue(token, forHTTPHeaderField: "x-amber-chat")
+        request.httpBody = try? JSONSerialization.data(withJSONObject: ["text": String(text.prefix(700))])
+        guard let (data, response) = try? await URLSession.shared.data(for: request),
+              (response as? HTTPURLResponse)?.statusCode == 200 else { return }
+        do {
+            let session = AVAudioSession.sharedInstance()
+            try session.setCategory(.playAndRecord, mode: .default, options: [.defaultToSpeaker, .allowBluetoothHFP])
+            try session.setActive(true)
+            player = try AVAudioPlayer(data: data)
+            player?.delegate = self
+            isSpeaking = true
+            player?.play()
+        } catch {
+            isSpeaking = false
+        }
+    }
+
+    func stop() { player?.stop(); isSpeaking = false }
+
+    nonisolated func audioPlayerDidFinishPlaying(_ player: AVAudioPlayer, successfully flag: Bool) {
+        Task { @MainActor in self.isSpeaking = false }
     }
 }

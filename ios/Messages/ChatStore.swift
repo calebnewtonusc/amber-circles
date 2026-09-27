@@ -36,6 +36,13 @@ final class ChatStore: ObservableObject {
     /// The conversation with each tool, kept here so it survives the building
     /// screen replacing the tool's screen.
     @Published var talk: [String: [Turn]] = [:]
+    let speaker = Speaker()
+
+    /// Amber's side of the conversation: shown, and said out loud.
+    private func reply(_ slug: String, _ text: String) {
+        talk[slug, default: []].append(Turn(text: text, mine: false))
+        if let token = session?.token { Task { await speaker.say(text, token: token) } }
+    }
 
     weak var host: MessagesViewController?
     private var participant = ""
@@ -165,13 +172,13 @@ final class ChatStore: ObservableObject {
             struct Reply: Decodable { let kind: String; let reply: String; let request: String? }
             let reply: Reply = try await API.call(
                 "api/tools/\(slug)/talk", method: "POST", body: ["text": words], chat: session.token)
-            talk[slug, default: []].append(Turn(text: reply.reply, mine: false))
+            self.reply(slug, reply.reply)
             guard reply.kind == "change" else { return }
             await change(slug, reply.request ?? words)
             if tool(slug)?.has_draft == true {
                 struct Summary: Decodable { let text: String }
                 if let summary: Summary = try? await API.call("api/tools/\(slug)/draft-summary", chat: session.token) {
-                    talk[slug, default: []].append(Turn(text: summary.text, mine: false))
+                    self.reply(slug, summary.text)
                 }
             }
         } catch {
