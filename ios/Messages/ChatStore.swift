@@ -337,7 +337,7 @@ final class ChatStore: ObservableObject {
     /// reaches a server log.
     func openURL(_ slug: String, draft: Bool = false) -> URL? {
         guard let session else { return nil }
-        let query = draft ? "?draft=1" : ""
+        let query = draft ? "?embed=1&draft=1" : "?embed=1"
         return URL(string: "\(API.base.absoluteString)/t/\(slug)\(query)#m=\(session.token)")
     }
 

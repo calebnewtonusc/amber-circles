@@ -936,6 +936,14 @@ async function runner(slug) {
   }
 
   const isOwnerHere = Boolean(store.get(OWNER_KEY)) && session.me.isOwner;
+  // Opened from the Amber iMessage app, which already frames it: show the
+  // tool and nothing else, no bar, no banner, no "Make your own".
+  if (params.get("embed") === "1") {
+    app.innerHTML = "";
+    document.body.classList.add("embedded");
+    activeCleanup = mountTool({ container: app, slug, token, session, draft: params.get("draft") === "1" });
+    return;
+  }
   app.innerHTML = `
     <header class="run-bar">
       ${isOwnerHere ? `<a class="btn btn-ghost btn-sm" href="/tools/${esc(slug)}" data-link aria-label="Back to the tool's page">${icon("back", "icon-sm")}</a>` : ""}

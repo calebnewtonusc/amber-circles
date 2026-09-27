@@ -1571,3 +1571,9 @@ body.welcoming .run-frame {
     position: static;
   }
 }
+
+/* Inside the Amber iMessage app the tool fills the sheet; Amber is the frame. */
+body.embedded .run-frame {
+  inset: 0;
+  height: 100%;
+}

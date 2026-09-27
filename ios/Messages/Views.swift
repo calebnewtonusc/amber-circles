@@ -331,7 +331,7 @@ struct ToolView: View {
                 VStack(alignment: .leading, spacing: 2) {
                     Text(tool.has_draft ? "Try your draft" : "Open it")
                         .font(Amber.font(20, .heavy))
-                    Text(tool.has_draft ? "Only you see this until you publish it." : "Live for everyone in the chat")
+                    Text(tool.has_draft ? "Only you see this until you publish it." : store.unpublished.contains(slug) ? "Only you have it until you publish it" : "Live for everyone in the chat")
                         .font(Amber.font(15)).multilineTextAlignment(.leading)
                 }
                 Spacer(minLength: 0)

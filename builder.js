@@ -46,8 +46,8 @@ Behaviour
 - Deleting asks for confirmation first. People can only remove entries they added themselves (compare author.id with amber.me().id); the owner can remove any. Only show a Remove button where it will work.
 
 Look
-- Match Amber, which looks like clear printed signage. Page #f2eee3, cards #fffcf5 with a 2px solid #17150f border and square corners, text #17150f, secondary text #5c574c. One accent, amber #ffb300, only ever as a fill behind dark text, never as text. Font "Atkinson Hyperlegible Next" from Google Fonts at weights 400, 700 and 800, used for everything; headings 800. No italics, no uppercase labels, no gradients, no blurred shadows, no rounded pills.
-- Buttons are blocks: 2px #17150f border, square corners, #fffcf5 fill, dark text, and a hard shadow "4px 4px 0 #17150f". The single most important action on the screen is the same block filled amber #ffb300. Pressing a button moves it 4px down and right and removes the shadow.
+- Match Amber, which follows Vercel's v0 look. Font "Geist" from Google Fonts at weights 400, 500 and 600 only, never heavier; headings 600 with slightly tight letter spacing. Page #fafafa, cards #ffffff with a 1px #ebebeb border, 12px corners and a soft shadow (0 1px 2px rgba(0,0,0,0.04)). Text #171717, secondary text #666666. No colored accents except #0070f3 for links, no gradients, no heavy shadows, no italics, no uppercase labels.
+- Buttons are pills (fully rounded): the single most important action is solid #171717 with white text; every other button is white with a 1px #ebebeb border and dark text. Inputs are white, 1px #ebebeb border, 12px corners, 18px text.
 
 Reply with the HTML file only, inside one \`\`\`html code block, and nothing after it.`;
 
