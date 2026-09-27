@@ -1088,3 +1088,10 @@ body { font-size: 1rem; }
 .card > .people { border-top: 0; }
 
 .card h2.card-title { font-size: 22px; margin-bottom: var(--space-2); }
+/* In the stacked phone layout a 200px flex-basis became a 200px-tall name box
+   (production render, 2026-09-27). */
+@media (max-width: 480px) { .hero form .input, .hero form .btn { flex: none; } }
+/* A grid or stack item will not shrink below its longest unbreakable line, so
+   the sign-in and connector URLs pushed the account page 544px past a phone's
+   edge (layout-check, 2026-09-27). The code block scrolls inside itself. */
+.card, .stack > *, .grid > * { min-width: 0; }
