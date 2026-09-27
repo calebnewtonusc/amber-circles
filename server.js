@@ -330,7 +330,8 @@ async function ownerOverview(owner, base) {
             (select max(o.at) from opens o where o.tool_id = t.id) as last_open,
             (select count(*) from records r where r.tool_id = t.id)::int as record_count,
             (select count(*) from access_requests a where a.tool_id = t.id and a.status = 'pending')::int as pending_requests,
-            (select count(*) from members m where m.circle_id = t.circle_id and m.last_seen > now() - interval '2 minutes')::int as here_now
+            (select count(*) from members m where m.circle_id = t.circle_id and m.last_seen > now() - interval '2 minutes')::int as here_now,
+            (select coalesce(json_agg(distinct o.member_id), '[]') from opens o where o.tool_id = t.id) as opened_by
        from tools t join circles c on c.id = t.circle_id
       where t.owner_id = $1 order by t.updated_at desc`,
     [owner.id],

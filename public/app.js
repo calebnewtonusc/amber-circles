@@ -1104,6 +1104,8 @@ async function toolPage(slug) {
   const circle = data.circles.find((entry) => entry.id === tool.circle_id);
   const token = ownerToken(tool.circle_id);
   const hereNow = circle.members.filter((member) => member.here_now && !member.is_owner).map((member) => member.name.split(" ")[0]);
+  const others = circle.members.filter((member) => !member.is_owner);
+  const notYet = others.filter((member) => !(tool.opened_by || []).includes(member.id)).map((member) => member.name.split(" ")[0]);
   app.querySelector("main").innerHTML = `
     <div class="masthead"><div><p class="kicker">${esc(circle.name)}</p><h2>${esc(tool.title)}</h2></div>
       <div class="row"><a class="btn" href="/t/${esc(slug)}#m=${encodeURIComponent(token)}">${icon("open", "icon-sm")} Full screen</a><a class="btn btn-primary" href="/share/${esc(slug)}" data-link>${icon("share", "icon-sm")} Send to ${esc(circle.name)}</a></div>
@@ -1131,7 +1133,8 @@ async function toolPage(slug) {
         }
         <section class="stack">
           <p class="kicker">Who has it</p>
-          <p class="lede">${tool.people_opened} of ${circle.members.length} have opened it${hereNow.length ? `. <span class="present">${esc(hereNow.join(", "))} ${hereNow.length === 1 ? "is" : "are"} using it right now.</span>` : "."}</p>
+          <p class="lede">${others.length - notYet.length} of ${others.length} have opened it${hereNow.length ? `. <span class="present">${esc(hereNow.join(", "))} ${hereNow.length === 1 ? "is" : "are"} using it right now.</span>` : "."}</p>
+          ${notYet.length ? `<p class="fine">Not opened yet: ${esc(notYet.join(", "))}. <a href="/share/${esc(slug)}" data-link>Send ${notYet.length === 1 ? "their link" : "their links"}</a></p>` : ""}
         </section>
         <section class="stack">
           <p class="kicker">Earlier versions</p>

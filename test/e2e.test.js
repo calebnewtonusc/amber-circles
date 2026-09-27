@@ -79,6 +79,8 @@ test("the whole flow: owner, circle, publish, member, outsider, bridge, frame, m
   const run = await call(`/api/run/${slug}`, { member: maya.token });
   assert.equal(run.status, 200);
   assert.equal(run.json.me.name, "Maya Chen");
+  const openedBy = (await call("/api/owner", { owner })).json.tools.find((t) => t.slug === slug).opened_by;
+  assert.deepEqual(openedBy, [maya.id], "the owner can see exactly who has opened it");
 
   // An outsider is turned away, and told who to ask.
   const outsider = await call(`/api/run/${slug}`, {
