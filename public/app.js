@@ -163,6 +163,7 @@ function shell(active, content) {
       <header class="nav">
         <a class="brand" href="/" data-link><span class="brand-mark" aria-hidden="true"></span><span class="brand-name">Amber</span><span class="brand-sub">Circles</span></a>
         <nav class="nav-links" aria-label="Main">
+          ${link("/make", "Make", "make")}
           ${link("/", "Tools", "tools")}
           ${link("/circles", "Circles", "circles")}
           ${link("/connect", "Connect Claude", "connect")}
@@ -189,6 +190,7 @@ function bindRetry() {
 }
 
 async function render() {
+  cleanupActive();
   document.body.classList.remove("runner");
   const path = location.pathname;
   const toolMatch = path.match(/^\/t\/([\w-]+)\/?$/);
@@ -200,6 +202,9 @@ async function render() {
   const shareMatch = path.match(/^\/share\/([\w-]+)$/);
   if (shareMatch) return sharePage(shareMatch[1]);
   if (path === "/new") return newToolPage();
+  if (path === "/make") return makePage();
+  const toolPageMatch = path.match(/^\/tools\/([\w-]+)$/);
+  if (toolPageMatch) return toolPage(toolPageMatch[1]);
   if (path === "/connect") return connectPage();
   return dashboard();
 }
@@ -304,7 +309,7 @@ function landing() {
     try {
       const { key } = await api("/api/owners", { method: "POST", body: { name: form.name.value } });
       store.set(OWNER_KEY, key);
-      navigate("/circles");
+      navigate("/make");
     } catch (error) {
       app.querySelector("#start-error").textContent = error.message;
       button.disabled = false;
@@ -319,14 +324,54 @@ function skeletonGrid(count = 3) {
   return `<div class="ledger">${Array.from({ length: count }, () => '<div class="ledger-row"><div class="skeleton skeleton-line"></div></div>').join("")}</div>`;
 }
 
+// People who opened a tool they were not given and asked to join. One tap
+// lets them in and hands the owner a text with their personal link.
+async function loadRequests() {
+  const target = app.querySelector("#requests");
+  if (!target) return;
+  try {
+    const { requests } = await api("/api/requests");
+    if (!requests.length) return;
+    target.innerHTML = `<section class="asks"><p class="kicker">Waiting to join</p>${requests
+      .map(
+        (ask) => `<div class="ask" data-ask="${esc(ask.id)}"><div><b>${esc(ask.name)}</b> wants to join ${esc(ask.circle_name)} for ${esc(ask.title)}${ask.note ? `<span class="sub">"${esc(ask.note)}"</span>` : ""}</div>
+          <div class="actions"><button class="btn btn-sm btn-primary" data-decide="approve">Let them in</button><button class="btn btn-sm btn-ghost" data-decide="decline">No thanks</button></div></div>`,
+      )
+      .join("")}</section>`;
+    target.querySelectorAll("[data-decide]").forEach((button) =>
+      button.addEventListener("click", async () => {
+        const row = button.closest("[data-ask]");
+        try {
+          const result = await api(`/api/requests/${row.dataset.ask}/${button.dataset.decide}`, { method: "POST" });
+          if (!result.link) {
+            row.remove();
+            return;
+          }
+          const message = `${result.name.split(" ")[0]}, you're in! Here's ${result.title} for ${result.circle}: ${result.link}`;
+          row.innerHTML = `<div><b>${esc(result.name)}</b> is in. Send them their link:</div><div class="actions">${
+            result.phone ? `<a class="btn btn-sm btn-primary" href="sms:${encodeURIComponent(result.phone)}?&body=${encodeURIComponent(message)}">${icon("message", "icon-sm")} Text it</a>` : ""
+          }<button class="btn btn-sm" data-copy="${esc(result.link)}">${icon("copy", "icon-sm")} Copy link</button></div>`;
+          bindCopy();
+        } catch (error) {
+          toast(error.message);
+        }
+      }),
+    );
+  } catch {
+    /* the list of tools still loads; requests will show on the next visit */
+  }
+}
+
 async function dashboard() {
   app.innerHTML = shell(
     "tools",
     `
     <div class="masthead"><div><p class="kicker">Your tools</p><h2>What your circles are using</h2></div>
-    <a class="btn btn-primary" href="/new" data-link>${icon("plus")} Publish a tool</a></div>
+    <a class="btn btn-primary" href="/make" data-link>${icon("plus")} Make something</a></div>
+    <div id="requests"></div>
     <div id="tools" class="mt-4">${skeletonGrid()}</div>`,
   );
+  loadRequests();
   try {
     const data = await loadOverview(true);
     const target = app.querySelector("#tools");
@@ -342,9 +387,9 @@ async function dashboard() {
     if (!data.tools.length) {
       target.innerHTML = stateView({
         glyph: "sparkle",
-        title: "Nothing published yet",
-        body: "Connect Claude and ask for a tool, or publish the attendance tracker to a circle in one step.",
-        action: '<div class="row"><a class="btn btn-primary" href="/connect" data-link>Connect Claude</a><a class="btn" href="/new?template=attendance" data-link>Use the attendance tracker</a></div>',
+        title: "Nothing made yet",
+        body: "Say what you want in your own words and Claude will build it for your group.",
+        action: '<a class="btn btn-primary btn-lg" href="/make" data-link>Make something</a>',
       });
       return;
     }
@@ -359,12 +404,12 @@ async function dashboard() {
             const open = `/t/${esc(tool.slug)}${token ? `?m=${encodeURIComponent(token)}` : ""}`;
             return `
             <div class="ledger-row ledger-tools">
-              <div><a class="title" href="${open}">${esc(tool.title)}</a><p class="sub">${esc(tool.description || "No description yet.")}</p></div>
+              <div><a class="title" href="/tools/${esc(tool.slug)}" data-link>${esc(tool.title)}</a><p class="sub">${esc(tool.description || "No description yet.")}</p></div>
               <div class="tag">${icon("users", "icon-sm")} ${esc(tool.circle_name)}</div>
               <div class="num"><span class="cell-label">Opened</span>${tool.people_opened}<small> of ${size}</small></div>
               <div class="num"><span class="cell-label">Entries</span>${tool.record_count}</div>
               <div class="num"><span class="cell-label">Last open</span><small>${timeAgo(tool.last_open)}</small></div>
-              <div class="actions"><a class="btn btn-sm" href="/share/${esc(tool.slug)}" data-link>${icon("share", "icon-sm")} Links</a><a class="btn btn-sm btn-primary" href="${open}">Open</a></div>
+              <div class="actions"><a class="btn btn-sm" href="/share/${esc(tool.slug)}" data-link>${icon("share", "icon-sm")} Links</a><a class="btn btn-sm btn-primary" href="/tools/${esc(tool.slug)}" data-link>Open</a></div>
             </div>`;
           })
           .join("")}
@@ -707,6 +752,83 @@ async function connectPage() {
 
 // ---------- the runner ----------
 
+// ---------- mounting a tool: the only code that talks to a tool frame ----------
+
+let activeCleanup = null;
+function cleanupActive() {
+  activeCleanup?.();
+  activeCleanup = null;
+}
+
+function mountTool({ container, slug, token, session, draft = false, frameClass = "run-frame" }) {
+  container.insertAdjacentHTML(
+    "beforeend",
+    `<iframe class="${frameClass}" title="${esc(session.tool.title)}" sandbox="allow-scripts allow-forms allow-modals" src="/frame/${encodeURIComponent(slug)}?ticket=${encodeURIComponent(session.ticket)}${draft ? "&draft=1" : ""}"></iframe>`,
+  );
+  const frame = container.querySelector("iframe:last-of-type");
+
+  // CSP closes fetch, images and forms, but no browser lets a page stop a
+  // sandboxed frame from navigating ITSELF, which is the one way left to carry
+  // data out in a URL. A tool loads exactly once; a second load means it tried
+  // to leave, so the frame is torn down and the person is told why.
+  let frameLoads = 0;
+  frame.addEventListener("load", () => {
+    frameLoads += 1;
+    if (frameLoads < 2) return;
+    frame.remove();
+    stop();
+    container.insertAdjacentHTML("beforeend", stateView({ glyph: "lock", title: "This tool tried to leave Amber", body: "Tools can only talk to your circle through Amber, so we closed it. Tell the circle owner." }));
+  });
+
+  // The stamp is how the frame hears about other people's changes, and it is
+  // the presence heartbeat: a cheap poll while the tab is visible.
+  let lastStamp = null;
+  const post = (message) => frame.contentWindow?.postMessage({ amber: 1, ...message }, "*");
+  const checkStamp = async () => {
+    if (document.hidden) return;
+    try {
+      const { result } = await api(`/api/run/${slug}/rpc`, { method: "POST", member: token, body: { op: "stamp" } });
+      if (lastStamp !== null && result !== lastStamp) post({ type: "change", detail: { by: "someone" } });
+      lastStamp = result;
+    } catch {
+      /* a missed poll is retried in four seconds */
+    }
+  };
+  checkStamp();
+  const poller = setInterval(checkStamp, 4000);
+
+  const ALLOWED = new Set(["me", "circle", "people", "list", "add", "update", "remove", "reach"]);
+  const onMessage = async (event) => {
+    if (event.source !== frame.contentWindow) return;
+    const message = event.data || {};
+    if (message.amber !== 1 || !ALLOWED.has(message.op)) return;
+    try {
+      if (message.op === "reach") {
+        if (!session.me.isOwner) throw new Error("Only the circle owner can reach out from a tool.");
+        const person = await api(`/api/run/${slug}/reach/${encodeURIComponent(message.memberId)}`, { member: token });
+        if (!person.phone) throw new Error(`${person.name} has no phone number in this circle yet.`);
+        location.href = `sms:${encodeURIComponent(person.phone)}?&body=${encodeURIComponent(message.message || "")}`;
+        post({ id: message.id, result: { ok: true } });
+        return;
+      }
+      const { op, id: callId, amber: _marker, ...args } = message;
+      const { result } = await api(`/api/run/${slug}/rpc`, { method: "POST", member: token, body: { op, ...args } });
+      post({ id: callId, result });
+      if (["add", "update", "remove"].includes(op)) lastStamp = null;
+    } catch (error) {
+      post({ id: message.id, error: error.message });
+    }
+  };
+  window.addEventListener("message", onMessage);
+  function stop() {
+    clearInterval(poller);
+    window.removeEventListener("message", onMessage);
+  }
+  return stop;
+}
+
+// ---------- the member's view ----------
+
 async function runner(slug) {
   const params = new URLSearchParams(location.search);
   const fromLink = params.get("m");
@@ -726,19 +848,9 @@ async function runner(slug) {
     document.body.classList.remove("runner");
     const gate = error.status === 403 && error.data?.error === "not_in_circle";
     app.innerHTML = `<div class="page"><header class="nav"><a class="brand" href="/" data-link><span class="brand-mark" aria-hidden="true"></span><span class="brand-name">Amber</span></a></header><main id="main">${
-      gate
-        ? stateView({
-            glyph: "lock",
-            title: `${error.data.title} is shared with ${error.data.circle}`,
-            body: `Only people in ${error.data.circle} can open it, each with their own link. Ask ${error.data.owner} to text you yours.`,
-          })
-        : error.status === 404
-          ? stateView({
-              title: "This tool is gone",
-              body: "The link is wrong, or the tool was deleted.",
-            })
-          : errorView(error)
+      gate ? askView(error.data) : error.status === 404 ? stateView({ title: "This tool is gone", body: "The link is wrong, or the tool was deleted." }) : errorView(error)
     }</main></div>`;
+    if (gate) bindAsk(slug, error.data);
     bindRetry();
     return;
   }
@@ -746,99 +858,288 @@ async function runner(slug) {
   const isOwnerHere = Boolean(store.get(OWNER_KEY)) && session.me.isOwner;
   app.innerHTML = `
     <header class="run-bar">
-      ${isOwnerHere ? `<a class="btn btn-ghost btn-sm" href="/" data-link aria-label="Back to your tools">${icon("back", "icon-sm")}</a>` : ""}
+      ${isOwnerHere ? `<a class="btn btn-ghost btn-sm" href="/tools/${esc(slug)}" data-link aria-label="Back to the tool's page">${icon("back", "icon-sm")}</a>` : ""}
       <span class="brand-mark" aria-hidden="true"></span>
       <span class="run-title">${esc(session.tool.title)}</span>
       <span class="tag">${icon("users", "icon-sm")} ${esc(session.circle)}</span>
       <span class="run-me">You're ${esc(session.me.name.split(" ")[0])}</span>
-    </header>
-    <iframe class="run-frame" title="${esc(session.tool.title)}" sandbox="allow-scripts allow-forms allow-modals" src="/frame/${encodeURIComponent(slug)}?ticket=${encodeURIComponent(session.ticket)}"></iframe>`;
-  const frame = app.querySelector("iframe");
+    </header>`;
+  activeCleanup = mountTool({ container: app, slug, token, session });
+}
 
-  // CSP closes fetch, images and forms, but no browser lets a page stop a
-  // sandboxed frame from navigating ITSELF, which is the one way left to carry
-  // data out in a URL. A tool loads exactly once; a second load means it tried
-  // to leave, so the frame is torn down and the person is told why.
-  let frameLoads = 0;
-  frame.addEventListener("load", () => {
-    frameLoads += 1;
-    if (frameLoads < 2) return;
-    frame.remove();
-    clearInterval(poller);
-    app.insertAdjacentHTML(
-      "beforeend",
-      `<div class="page pt-run">${stateView({ glyph: "lock", title: "This tool tried to leave Amber", body: "Tools can only talk to your circle through Amber, so we closed it. Tell the circle owner." })}</div>`,
-    );
-  });
+// The Google Docs "Request access" flow: someone opens a tool they were not
+// given, asks by name, and the owner lets them in with one tap.
+function askView(data) {
+  return `
+    <div class="state">
+      <div class="glyph">${icon("lock")}</div>
+      <h2>${esc(data.title)} is for ${esc(data.circle)}</h2>
+      <p>Only people in ${esc(data.circle)} can open it. Ask ${esc(data.owner)} to let you in, and you will get your own link by text.</p>
+      <form id="ask" class="stack">
+        <div class="field"><label for="ask-name">Your name</label><input class="input" id="ask-name" name="name" required maxlength="80" autocomplete="name"></div>
+        <div class="field"><label for="ask-phone">Your phone number</label><input class="input" id="ask-phone" name="phone" inputmode="tel" autocomplete="tel" required></div>
+        <div class="field"><label for="ask-note">A note for ${esc(data.owner)} (optional)</label><input class="input" id="ask-note" name="note" maxlength="280"></div>
+        <p class="error-text" id="ask-error" role="alert"></p>
+        <button class="btn btn-primary btn-lg" type="submit">Ask to join</button>
+      </form>
+    </div>`;
+}
 
-  // The stamp is how the frame hears about other people's changes: a cheap
-  // poll while the tab is visible, then a nudge into the tool.
-  let lastStamp = null;
-  const post = (message) =>
-    frame.contentWindow?.postMessage({ amber: 1, ...message }, "*");
-  const checkStamp = async () => {
-    if (document.hidden) return;
+function bindAsk(slug, data) {
+  const form = app.querySelector("#ask");
+  form?.addEventListener("submit", async (event) => {
+    event.preventDefault();
+    const button = form.querySelector("button");
+    button.disabled = true;
     try {
-      const { result } = await api(`/api/run/${slug}/rpc`, {
-        method: "POST",
-        member: token,
-        body: { op: "stamp" },
-      });
-      if (lastStamp !== null && result !== lastStamp)
-        post({ type: "change", detail: { by: "someone" } });
-      lastStamp = result;
-    } catch {
-      /* a missed poll is retried in four seconds */
-    }
-  };
-  checkStamp();
-  const poller = setInterval(checkStamp, 4000);
-  window.addEventListener("popstate", () => clearInterval(poller), {
-    once: true,
-  });
-
-  const ALLOWED = new Set([
-    "me",
-    "circle",
-    "people",
-    "list",
-    "add",
-    "update",
-    "remove",
-    "reach",
-  ]);
-  window.onmessage = async (event) => {
-    if (event.source !== frame.contentWindow) return;
-    const message = event.data || {};
-    if (message.amber !== 1 || !ALLOWED.has(message.op)) return;
-    try {
-      if (message.op === "reach") {
-        if (!session.me.isOwner)
-          throw new Error("Only the circle owner can reach out from a tool.");
-        const person = await api(
-          `/api/run/${slug}/reach/${encodeURIComponent(message.memberId)}`,
-          { member: token },
-        );
-        if (!person.phone)
-          throw new Error(
-            `${person.name} has no phone number in this circle yet.`,
-          );
-        location.href = `sms:${encodeURIComponent(person.phone)}?&body=${encodeURIComponent(message.message || "")}`;
-        post({ id: message.id, result: { ok: true } });
-        return;
-      }
-      const { op, id: callId, amber: _marker, ...args } = message;
-      const { result } = await api(`/api/run/${slug}/rpc`, {
-        method: "POST",
-        member: token,
-        body: { op, ...args },
-      });
-      post({ id: callId, result });
-      if (["add", "update", "remove"].includes(op)) lastStamp = null;
+      await api(`/api/run/${slug}/ask`, { method: "POST", body: { name: form.name.value, phone: form.phone.value, note: form.note.value } });
+      form.outerHTML = `<p class="quote">Sent. ${esc(data.owner)} will see your name next time they open Amber, and you will get a text with your link.</p>`;
     } catch (error) {
-      post({ id: message.id, error: error.message });
+      app.querySelector("#ask-error").textContent = error.message;
+      button.disabled = false;
     }
+  });
+}
+
+// ---------- make: the page Grandpa starts on ----------
+
+const IDEAS = [
+  "A prayer list for my Monday Bible class. Anyone can add a request, and we can mark when a prayer is answered.",
+  "A sign-up sheet for who is bringing what to Sunday's potluck.",
+  "Rides to church: who can drive, who needs a ride, and who is going with whom.",
+  "Attendance for our club meetings, and who we have not seen in a while.",
+];
+
+// Reading what the model is doing into words a person can follow. A two
+// minute blank wait reads as broken, and older users blame themselves (NN/g,
+// research/vibe-coding-vs-docs.md), so every stage is named as it happens.
+function progressView() {
+  return `
+    <div class="progress" aria-live="polite">
+      <ol class="stages">
+        <li data-stage="thinking"><span class="mark"></span><span>Reading what you asked for</span><span class="when"></span></li>
+        <li data-stage="writing"><span class="mark"></span><span>Writing it</span><span class="when"></span></li>
+        <li data-stage="checking"><span class="mark"></span><span>Checking it works</span><span class="when"></span></li>
+      </ol>
+      <p class="fine" id="elapsed">Usually takes about a minute.</p>
+    </div>`;
+}
+
+async function streamBuild(body, root) {
+  const order = ["thinking", "writing", "checking"];
+  const started = Date.now();
+  const clock = setInterval(() => {
+    const seconds = Math.round((Date.now() - started) / 1000);
+    const el = root.querySelector("#elapsed");
+    if (el) el.textContent = `${seconds} seconds so far. Usually takes about a minute.`;
+  }, 1000);
+  const mark = (stage, detail = "") => {
+    const index = order.indexOf(stage);
+    root.querySelectorAll(".stages li").forEach((row, rowIndex) => {
+      row.className = rowIndex < index ? "is-done" : rowIndex === index ? "is-now" : "";
+      if (rowIndex === index && detail) row.querySelector(".when").textContent = detail;
+    });
   };
+  try {
+    const headers = { "content-type": "application/json", authorization: `Bearer ${store.get(OWNER_KEY)}` };
+    const response = await fetch("/api/build", { method: "POST", headers, body: JSON.stringify(body) });
+    if (!response.ok) {
+      const data = await response.json().catch(() => ({}));
+      throw new Error(data.error || "That did not start. Try again.");
+    }
+    const reader = response.body.getReader();
+    const decoder = new TextDecoder();
+    let buffer = "";
+    for (;;) {
+      const { value, done } = await reader.read();
+      if (done) break;
+      buffer += decoder.decode(value, { stream: true });
+      let split;
+      while ((split = buffer.indexOf("\n\n")) >= 0) {
+        const chunk = buffer.slice(0, split);
+        buffer = buffer.slice(split + 2);
+        const event = chunk.match(/^event: (.*)$/m)?.[1];
+        const data = JSON.parse(chunk.match(/^data: (.*)$/m)?.[1] || "{}");
+        if (event === "progress") mark(data.stage, data.chars ? `${data.chars.toLocaleString()} letters` : "");
+        if (event === "error") throw new Error(data.message);
+        if (event === "done") return data;
+      }
+    }
+    throw new Error("The connection dropped before it finished. Try again.");
+  } finally {
+    clearInterval(clock);
+  }
+}
+
+async function makePage() {
+  app.innerHTML = shell("make", '<div class="skeleton h-360"></div>');
+  let data;
+  try {
+    data = await loadOverview(true);
+  } catch (error) {
+    app.querySelector("main").innerHTML = errorView(error);
+    return bindRetry();
+  }
+  app.querySelector("main").innerHTML = `
+    <div class="masthead"><div><p class="kicker">Make something</p><h2>What do you want to make?</h2>
+    <p class="lede">Say it the way you would say it to a friend. Claude builds it, and only the people you choose can open it.</p></div></div>
+    <form id="make" class="make">
+      <label class="skip" for="make-request">What you want</label>
+      <textarea class="input make-request" id="make-request" name="request" required maxlength="4000" placeholder="A prayer list for my Monday Bible class…"></textarea>
+      <div class="ideas"><span class="fine">Or start from one of these:</span>${IDEAS.map((idea, index) => `<button type="button" class="idea" data-idea="${index}">${esc(idea.split(".")[0])}</button>`).join("")}</div>
+      <div class="field who">
+        <label for="make-circle">Who is it for?</label>
+        <select class="input" id="make-circle" name="circle">
+          ${data.circles.map((circle) => `<option value="${esc(circle.id)}">${esc(circle.name)} (${circle.members.length} ${circle.members.length === 1 ? "person" : "people"})</option>`).join("")}
+          <option value="__new" ${data.circles.length ? "" : "selected"}>A new group…</option>
+        </select>
+      </div>
+      <div class="new-group stack" id="new-group" ${data.circles.length ? "hidden" : ""}>
+        <div class="field"><label for="group-name">What do you call this group?</label><input class="input" id="group-name" name="groupName" placeholder="Monday Bible Class" maxlength="80"></div>
+        <div class="field"><label for="group-people">Who is in it? One person per line: name, then phone</label><textarea class="input" id="group-people" name="groupPeople" placeholder="Ruth Miller, 253 555 0101&#10;Harold Jensen, 253 555 0102"></textarea><span class="hint">Phones are only used to text each person their own link. The tool never sees them.</span></div>
+      </div>
+      <p class="error-text" id="make-error" role="alert"></p>
+      <button class="btn btn-primary btn-lg" type="submit">Make it ${icon("arrow")}</button>
+    </form>
+    <div id="make-progress"></div>`;
+  const form = app.querySelector("#make");
+  form.querySelectorAll("[data-idea]").forEach((button) =>
+    button.addEventListener("click", () => {
+      form.request.value = IDEAS[Number(button.dataset.idea)];
+      form.request.focus();
+    }),
+  );
+  form.circle.addEventListener("change", () => {
+    app.querySelector("#new-group").hidden = form.circle.value !== "__new";
+  });
+  form.addEventListener("submit", async (event) => {
+    event.preventDefault();
+    const error = app.querySelector("#make-error");
+    error.textContent = "";
+    try {
+      let circle = form.circle.value;
+      if (circle === "__new") {
+        if (!form.groupName.value.trim()) throw new Error("Give the group a name first.");
+        const created = await api("/api/circles", { method: "POST", body: { name: form.groupName.value, members: parseMembers(form.groupPeople.value) } });
+        circle = created.id;
+      }
+      form.hidden = true;
+      const progress = app.querySelector("#make-progress");
+      progress.innerHTML = progressView();
+      const done = await streamBuild({ request: form.request.value, circle }, progress);
+      toast("It is ready");
+      navigate(`/tools/${done.slug}`);
+    } catch (problem) {
+      form.hidden = false;
+      app.querySelector("#make-progress").innerHTML = "";
+      error.textContent = problem.message;
+    }
+  });
+}
+
+// ---------- the tool's page: see it, change it, go back, share it ----------
+
+async function toolPage(slug) {
+  app.innerHTML = shell("tools", '<div class="skeleton h-420"></div>');
+  let data;
+  let versions;
+  try {
+    [data, { versions }] = await Promise.all([loadOverview(true), api(`/api/tools/${slug}/versions`)]);
+  } catch (error) {
+    app.querySelector("main").innerHTML = errorView(error);
+    return bindRetry();
+  }
+  const tool = data.tools.find((entry) => entry.slug === slug);
+  if (!tool) {
+    app.querySelector("main").innerHTML = stateView({ title: "No such tool", body: "It may have been deleted.", action: '<a class="btn" href="/" data-link>Back to your tools</a>' });
+    return;
+  }
+  const circle = data.circles.find((entry) => entry.id === tool.circle_id);
+  const token = ownerToken(tool.circle_id);
+  const hereNow = circle.members.filter((member) => member.here_now && !member.is_owner).map((member) => member.name.split(" ")[0]);
+  app.querySelector("main").innerHTML = `
+    <div class="masthead"><div><p class="kicker">${esc(circle.name)}</p><h2>${esc(tool.title)}</h2></div>
+      <div class="row"><a class="btn" href="/t/${esc(slug)}?m=${encodeURIComponent(token)}">${icon("open", "icon-sm")} Full screen</a><a class="btn btn-primary" href="/share/${esc(slug)}" data-link>${icon("share", "icon-sm")} Send to ${esc(circle.name)}</a></div>
+    </div>
+    <div class="workspace">
+      <div class="phone" id="preview">${tool.has_draft ? '<p class="phone-label">The change, with your real data. Nobody else sees it yet.</p>' : '<p class="phone-label">What everyone sees right now</p>'}</div>
+      <div class="panel">
+        ${
+          tool.has_draft
+            ? `<section class="sheet stack draft">
+                <p class="kicker">Your change is ready to try</p>
+                <p class="quote">"${esc(tool.draft_request)}"</p>
+                <p class="lede">Try it on the left. If you like it, keep it and everyone gets it. If not, put it back and nothing changes.</p>
+                <div class="row"><button class="btn btn-primary btn-lg" id="keep">Keep this</button><button class="btn btn-lg" id="discard">Put it back</button></div>
+              </section>`
+            : `<form class="stack" id="change">
+                <p class="kicker">Change something</p>
+                <label class="skip" for="change-request">What to change</label>
+                <textarea class="input" id="change-request" name="request" required maxlength="4000" placeholder="Make the writing bigger. Add a place for the date."></textarea>
+                <p class="error-text" id="change-error" role="alert"></p>
+                <button class="btn btn-primary" type="submit">Make the change</button>
+                <p class="fine">You will see it here first. Nothing changes for anyone else until you keep it.</p>
+              </form>
+              <div id="change-progress"></div>`
+        }
+        <section class="stack">
+          <p class="kicker">Who has it</p>
+          <p class="lede">${tool.people_opened} of ${circle.members.length} have opened it${hereNow.length ? `. <span class="present">${esc(hereNow.join(", "))} ${hereNow.length === 1 ? "is" : "are"} using it right now.</span>` : "."}</p>
+        </section>
+        <section class="stack">
+          <p class="kicker">Earlier versions</p>
+          <ol class="versions">${versions
+            .map(
+              (version) => `<li><div><b>Version ${version.version}</b><span>${esc(version.request || "The first version")}</span><span class="fine">${timeAgo(version.created_at)}</span></div>${
+                version.current ? '<span class="tag">Live now</span>' : `<button class="btn btn-sm" data-restore="${version.version}">Go back to this</button>`
+              }</li>`,
+            )
+            .join("")}</ol>
+        </section>
+      </div>
+    </div>`;
+
+  try {
+    const session = await api(`/api/run/${slug}`, { member: token });
+    activeCleanup = mountTool({ container: app.querySelector("#preview"), slug, token, session, draft: tool.has_draft, frameClass: "phone-frame" });
+  } catch (error) {
+    app.querySelector("#preview").insertAdjacentHTML("beforeend", errorView(error));
+  }
+
+  app.querySelector("#keep")?.addEventListener("click", async () => {
+    await api(`/api/tools/${slug}/keep`, { method: "POST" });
+    toast("Kept. Everyone has the new version now.");
+    toolPage(slug);
+  });
+  app.querySelector("#discard")?.addEventListener("click", async () => {
+    await api(`/api/tools/${slug}/discard`, { method: "POST" });
+    toast("Put back. Nothing changed.");
+    toolPage(slug);
+  });
+  app.querySelectorAll("[data-restore]").forEach((button) =>
+    button.addEventListener("click", async () => {
+      if (!confirm(`Go back to version ${button.dataset.restore}? Everyone will get that version. The saved entries stay.`)) return;
+      await api(`/api/tools/${slug}/restore`, { method: "POST", body: { version: Number(button.dataset.restore) } });
+      toast(`Back to version ${button.dataset.restore}`);
+      toolPage(slug);
+    }),
+  );
+  const change = app.querySelector("#change");
+  change?.addEventListener("submit", async (event) => {
+    event.preventDefault();
+    const progress = app.querySelector("#change-progress");
+    change.hidden = true;
+    progress.innerHTML = progressView();
+    try {
+      await streamBuild({ request: change.request.value, slug }, progress);
+      cleanupActive();
+      toolPage(slug);
+    } catch (problem) {
+      change.hidden = false;
+      progress.innerHTML = "";
+      app.querySelector("#change-error").textContent = problem.message;
+    }
+  });
 }
 
 render();

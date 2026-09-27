@@ -13,6 +13,8 @@ import { Hono } from "hono";
 import { serve } from "@hono/node-server";
 import { serveStatic } from "@hono/node-server/serve-static";
 import pg from "pg";
+import { streamSSE } from "hono/streaming";
+import { build, titleFrom } from "./builder.js";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const PORT = Number(process.env.PORT || 8787);
@@ -204,55 +206,75 @@ async function findCircle(owner, circleRef) {
   return rows[0];
 }
 
-async function publishTool(owner, { title, description = "", circle, html }) {
+async function publishTool(owner, { title, description = "", circle, html, request = "" }) {
   const target = await findCircle(owner, circle);
   const source = requireText(html, "html", MAX_TOOL_HTML_BYTES);
   const id = newId("tool");
   const slug = slugify(title);
-  await pool.query(
-    `insert into tools (id, slug, owner_id, circle_id, title, description, html)
-     values ($1, $2, $3, $4, $5, $6, $7)`,
-    [
-      id,
-      slug,
-      owner.id,
-      target.id,
-      requireText(title, "title", 80),
-      String(description).slice(0, 500),
-      source,
-    ],
-  );
+  const client = await pool.connect();
+  try {
+    await client.query("begin");
+    await client.query(
+      `insert into tools (id, slug, owner_id, circle_id, title, description, html, request)
+       values ($1, $2, $3, $4, $5, $6, $7, $8)`,
+      [id, slug, owner.id, target.id, requireText(title, "title", 80), String(description).slice(0, 500), source, String(request).slice(0, 4000)],
+    );
+    await client.query(
+      "insert into tool_versions (tool_id, version, html, request) values ($1, 1, $2, $3)",
+      [id, source, String(request).slice(0, 4000)],
+    );
+    await client.query("commit");
+  } catch (error) {
+    await client.query("rollback");
+    throw error;
+  } finally {
+    client.release();
+  }
   return { slug, circle: target.name };
 }
 
-async function updateTool(owner, slug, { html, title, description }) {
-  const { rows } = await pool.query(
-    `update tools set
-       html = coalesce($3, html),
-       title = coalesce($4, title),
-       description = coalesce($5, description),
-       version = version + 1,
-       updated_at = now()
-     where owner_id = $1 and slug = $2
-     returning slug, version`,
-    [
-      owner.id,
-      slug,
-      html ? requireText(html, "html", MAX_TOOL_HTML_BYTES) : null,
-      title ? requireText(title, "title", 80) : null,
-      description ?? null,
-    ],
-  );
-  if (!rows[0])
-    throw new HttpError(404, "No tool with that link belongs to you.");
-  return rows[0];
+async function updateTool(owner, slug, { html, title, description, request = "" }) {
+  const client = await pool.connect();
+  try {
+    await client.query("begin");
+    const { rows } = await client.query(
+      `update tools set
+         html = coalesce($3, html),
+         title = coalesce($4, title),
+         description = coalesce($5, description),
+         version = version + 1,
+         updated_at = now()
+       where owner_id = $1 and slug = $2
+       returning id, slug, version, html`,
+      [
+        owner.id,
+        slug,
+        html ? requireText(html, "html", MAX_TOOL_HTML_BYTES) : null,
+        title ? requireText(title, "title", 80) : null,
+        description ?? null,
+      ],
+    );
+    if (!rows[0]) throw new HttpError(404, "No tool with that link belongs to you.");
+    await client.query(
+      "insert into tool_versions (tool_id, version, html, request) values ($1, $2, $3, $4) on conflict do nothing",
+      [rows[0].id, rows[0].version, rows[0].html, String(request).slice(0, 4000)],
+    );
+    await client.query("commit");
+    return { slug: rows[0].slug, version: rows[0].version };
+  } catch (error) {
+    await client.query("rollback");
+    throw error;
+  } finally {
+    client.release();
+  }
 }
 
 async function ownerOverview(owner, base) {
   const circles = await pool.query(
     `select c.id, c.name, c.created_at,
             coalesce(json_agg(json_build_object(
-              'id', m.id, 'name', m.name, 'phone', m.phone, 'is_owner', m.is_owner, 'token_sealed', m.token_sealed
+              'id', m.id, 'name', m.name, 'phone', m.phone, 'is_owner', m.is_owner, 'token_sealed', m.token_sealed,
+              'here_now', coalesce(m.last_seen > now() - interval '2 minutes', false)
             ) order by m.is_owner desc, m.created_at) filter (where m.id is not null), '[]') as members
        from circles c left join members m on m.circle_id = c.id
       where c.owner_id = $1
@@ -261,11 +283,14 @@ async function ownerOverview(owner, base) {
   );
   const tools = await pool.query(
     `select t.slug, t.title, t.description, t.version, t.updated_at, t.created_at,
+            (t.draft_html is not null) as has_draft, t.draft_request,
             c.id as circle_id, c.name as circle_name,
             (select count(*) from opens o where o.tool_id = t.id)::int as open_count,
             (select count(distinct o.member_id) from opens o where o.tool_id = t.id)::int as people_opened,
             (select max(o.at) from opens o where o.tool_id = t.id) as last_open,
-            (select count(*) from records r where r.tool_id = t.id)::int as record_count
+            (select count(*) from records r where r.tool_id = t.id)::int as record_count,
+            (select count(*) from access_requests a where a.tool_id = t.id and a.status = 'pending')::int as pending_requests,
+            (select count(*) from members m where m.circle_id = t.circle_id and m.last_seen > now() - interval '2 minutes')::int as here_now
        from tools t join circles c on c.id = t.circle_id
       where t.owner_id = $1 order by t.updated_at desc`,
     [owner.id],
@@ -315,7 +340,9 @@ async function bridge(access, body) {
   switch (op) {
     case "stamp": {
       // A fingerprint of the tool's shared data, polled by the frame so one
-      // person's check-in shows up on everyone else's screen.
+      // person's check-in shows up on everyone else's screen. The same poll is
+      // the presence heartbeat.
+      await pool.query("update members set last_seen = now() where id = $1", [access.member_id]);
       const {
         rows: [row],
       } = await pool.query(
@@ -755,8 +782,9 @@ app.get("/frame/:slug", async (c) => {
   if (!memberId)
     return c.text("This frame link expired. Reload the tool.", 403);
   const { rows } = await pool.query(
-    `select t.html from tools t join members m on m.circle_id = t.circle_id where t.slug = $1 and m.id = $2`,
-    [slug, memberId],
+    `select case when $3::boolean and m.is_owner and t.draft_html is not null then t.draft_html else t.html end as html
+       from tools t join members m on m.circle_id = t.circle_id where t.slug = $1 and m.id = $2`,
+    [slug, memberId, c.req.query("draft") === "1"],
   );
   if (!rows[0]) return c.text("Not found", 404);
   c.header("content-security-policy", FRAME_CSP);
@@ -821,6 +849,161 @@ app.post("/mcp/:key", async (c) => {
         id: message.id,
         error: { code: -32601, message: `Method not found: ${message.method}` },
       });
+  }
+});
+
+// ---------- the builder, versions, and asking to be let in ----------
+
+// Guessed, never measured: every build spends real money on the owner's key,
+// and a stuck retry loop in a browser should not be able to spend more than
+// about a dollar an hour. Twelve builds an hour is far past what a person
+// iterating by hand does.
+const BUILDS_PER_HOUR = 12;
+const buildLog = new Map();
+function allowBuild(ownerId) {
+  const now = Date.now();
+  const recent = (buildLog.get(ownerId) || []).filter((at) => now - at < 3600_000);
+  if (recent.length >= BUILDS_PER_HOUR) return false;
+  recent.push(now);
+  buildLog.set(ownerId, recent);
+  return true;
+}
+
+app.post("/api/build", async (c) => {
+  const owner = await requireOwner(c);
+  const body = await c.req.json();
+  const request = requireText(body.request, "what you want", 4000);
+  const existing = body.slug
+    ? (await pool.query("select slug, title, html, circle_id from tools where owner_id = $1 and slug = $2", [owner.id, String(body.slug)])).rows[0]
+    : null;
+  if (body.slug && !existing) throw new HttpError(404, "No tool with that link belongs to you.");
+  const circle = existing
+    ? (await pool.query("select id, name from circles where id = $1", [existing.circle_id])).rows[0]
+    : await findCircle(owner, body.circle);
+  const { rows: people } = await pool.query("select name from members where circle_id = $1 order by is_owner desc, name", [circle.id]);
+  if (!allowBuild(owner.id)) throw new HttpError(429, "That is a lot of building for one hour. Take a break and try again in a little while.");
+
+  return streamSSE(c, async (sse) => {
+    const send = (event, data) => sse.writeSSE({ event, data: JSON.stringify(data) });
+    try {
+      const { html } = await build({
+        request,
+        circleName: circle.name,
+        people: people.map((person) => person.name),
+        currentHtml: existing?.html,
+        onProgress: (progress) => send("progress", progress),
+      });
+      if (existing) {
+        await pool.query("update tools set draft_html = $3, draft_request = $4 where owner_id = $1 and slug = $2", [owner.id, existing.slug, html, request]);
+        await send("done", { slug: existing.slug, draft: true });
+      } else {
+        const result = await publishTool(owner, { title: body.title || titleFrom(request), description: request.slice(0, 200), circle: circle.id, html, request });
+        await send("done", { slug: result.slug, version: 1 });
+      }
+    } catch (error) {
+      if (!(error.status >= 400 && error.status < 600)) console.error(error);
+      await send("error", { message: error.status ? error.message : "Something went wrong while building. Try again." });
+    }
+  });
+});
+
+app.post("/api/tools/:slug/keep", async (c) => {
+  const owner = await requireOwner(c);
+  const { rows } = await pool.query("select draft_html, draft_request from tools where owner_id = $1 and slug = $2", [owner.id, c.req.param("slug")]);
+  if (!rows[0]?.draft_html) throw new HttpError(404, "There is no change waiting. Ask for one first.");
+  const result = await updateTool(owner, c.req.param("slug"), { html: rows[0].draft_html, request: rows[0].draft_request || "" });
+  await pool.query("update tools set draft_html = null, draft_request = null where owner_id = $1 and slug = $2", [owner.id, c.req.param("slug")]);
+  return c.json(result);
+});
+
+app.post("/api/tools/:slug/discard", async (c) => {
+  const owner = await requireOwner(c);
+  await pool.query("update tools set draft_html = null, draft_request = null where owner_id = $1 and slug = $2", [owner.id, c.req.param("slug")]);
+  return c.json({ ok: true });
+});
+
+app.get("/api/tools/:slug/versions", async (c) => {
+  const owner = await requireOwner(c);
+  const { rows } = await pool.query(
+    `select v.version, v.request, v.created_at, (v.version = t.version) as current
+       from tool_versions v join tools t on t.id = v.tool_id
+      where t.owner_id = $1 and t.slug = $2 order by v.version desc limit 30`,
+    [owner.id, c.req.param("slug")],
+  );
+  return c.json({ versions: rows });
+});
+
+app.post("/api/tools/:slug/restore", async (c) => {
+  const owner = await requireOwner(c);
+  const { version } = await c.req.json();
+  const { rows } = await pool.query(
+    `select v.html from tool_versions v join tools t on t.id = v.tool_id
+      where t.owner_id = $1 and t.slug = $2 and v.version = $3`,
+    [owner.id, c.req.param("slug"), Number(version)],
+  );
+  if (!rows[0]) throw new HttpError(404, "That version is not there any more.");
+  return c.json(await updateTool(owner, c.req.param("slug"), { html: rows[0].html, request: `Went back to version ${Number(version)}` }));
+});
+
+// Guessed, never measured: a real circle is a few dozen people, so fifty
+// open requests on one tool means someone is spamming the form.
+const MAX_PENDING_REQUESTS = 50;
+
+app.post("/api/run/:slug/ask", async (c) => {
+  const body = await c.req.json().catch(() => ({}));
+  const { rows } = await pool.query("select id from tools where slug = $1", [c.req.param("slug")]);
+  if (!rows[0]) throw new HttpError(404, "This tool does not exist.");
+  const { rows: [{ count }] } = await pool.query(
+    "select count(*)::int as count from access_requests where tool_id = $1 and status = 'pending'",
+    [rows[0].id],
+  );
+  if (count >= MAX_PENDING_REQUESTS) throw new HttpError(429, "There are already a lot of people waiting. Text the owner directly.");
+  await pool.query(
+    "insert into access_requests (id, tool_id, name, phone, note) values ($1, $2, $3, $4, $5)",
+    [newId("req"), rows[0].id, requireText(body.name, "your name", 80), normalizePhone(body.phone), String(body.note || "").slice(0, 280)],
+  );
+  return c.json({ ok: true });
+});
+
+app.get("/api/requests", async (c) => {
+  const owner = await requireOwner(c);
+  const { rows } = await pool.query(
+    `select a.id, a.name, a.phone, a.note, a.created_at, t.slug, t.title, c.name as circle_name
+       from access_requests a join tools t on t.id = a.tool_id join circles c on c.id = t.circle_id
+      where t.owner_id = $1 and a.status = 'pending' order by a.created_at`,
+    [owner.id],
+  );
+  return c.json({ requests: rows });
+});
+
+app.post("/api/requests/:id/:decision", async (c) => {
+  const owner = await requireOwner(c);
+  const decision = c.req.param("decision");
+  if (!["approve", "decline"].includes(decision)) throw new HttpError(404, "Not a choice.");
+  const client = await pool.connect();
+  try {
+    await client.query("begin");
+    const { rows } = await client.query(
+      `select a.id, a.name, a.phone, t.slug, t.title, t.circle_id, c.name as circle_name
+         from access_requests a join tools t on t.id = a.tool_id join circles c on c.id = t.circle_id
+        where a.id = $1 and t.owner_id = $2 and a.status = 'pending' for update of a`,
+      [c.req.param("id"), owner.id],
+    );
+    if (!rows[0]) throw new HttpError(404, "That request was already handled.");
+    const ask = rows[0];
+    await client.query("update access_requests set status = $2 where id = $1", [ask.id, decision === "approve" ? "approved" : "declined"]);
+    let link = null;
+    if (decision === "approve") {
+      const member = await addMember(client, ask.circle_id, { name: ask.name, phone: ask.phone });
+      link = `${publicUrl(c)}/t/${ask.slug}?m=${encodeURIComponent(member.token)}`;
+    }
+    await client.query("commit");
+    return c.json({ ok: true, name: ask.name, phone: ask.phone, title: ask.title, circle: ask.circle_name, link });
+  } catch (error) {
+    await client.query("rollback");
+    throw error;
+  } finally {
+    client.release();
   }
 });
 

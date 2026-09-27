@@ -1,0 +1,233 @@
+// The Google Docs mechanics, end to end against a running server, without a
+// paid Claude call: every change is kept and restorable, a draft can be
+// discarded, and a stranger can ask to join and be let in with one tap.
+import { test } from "node:test";
+import assert from "node:assert/strict";
+
+const BASE = process.env.AMBER_URL || "http://localhost:8787";
+
+async function call(path, { method = "GET", body, owner, member } = {}) {
+  const headers = { "content-type": "application/json" };
+  if (owner) headers.authorization = `Bearer ${owner}`;
+  if (member) headers["x-amber-member"] = member;
+  const response = await fetch(BASE + path, {
+    method,
+    headers,
+    body: body ? JSON.stringify(body) : undefined,
+  });
+  return {
+    status: response.status,
+    json: await response.json().catch(() => null),
+  };
+}
+
+const page = (text) =>
+  `<!doctype html><html><head><title>t</title></head><body><p>${text}</p></body></html>`;
+
+test("every change is kept, and going back restores the old tool as a new version", async () => {
+  const owner = (
+    await call("/api/owners", { method: "POST", body: { name: "Stan" } })
+  ).json.key;
+  const { id } = (
+    await call("/api/circles", {
+      method: "POST",
+      owner,
+      body: { name: "Class" },
+    })
+  ).json;
+  const { slug } = (
+    await call("/api/tools", {
+      method: "POST",
+      owner,
+      body: { title: "Prayers", circle: id, html: page("one") },
+    })
+  ).json;
+  await call(`/api/tools/${slug}`, {
+    method: "PUT",
+    owner,
+    body: { html: page("two") },
+  });
+  await call(`/api/tools/${slug}`, {
+    method: "PUT",
+    owner,
+    body: { html: page("three") },
+  });
+
+  const { versions } = (await call(`/api/tools/${slug}/versions`, { owner }))
+    .json;
+  assert.deepEqual(
+    versions.map((v) => v.version),
+    [3, 2, 1],
+  );
+  assert.equal(versions.find((v) => v.current).version, 3);
+
+  const restored = await call(`/api/tools/${slug}/restore`, {
+    method: "POST",
+    owner,
+    body: { version: 1 },
+  });
+  assert.equal(
+    restored.json.version,
+    4,
+    "going back is itself a new version, so it can be undone",
+  );
+  const after = (await call(`/api/tools/${slug}/versions`, { owner })).json
+    .versions;
+  assert.equal(after[0].request, "Went back to version 1");
+
+  // Keep with nothing waiting says so; discard is always safe.
+  assert.equal(
+    (await call(`/api/tools/${slug}/keep`, { method: "POST", owner })).status,
+    404,
+  );
+  assert.equal(
+    (await call(`/api/tools/${slug}/discard`, { method: "POST", owner }))
+      .status,
+    200,
+  );
+
+  // Another owner cannot read or restore this tool's history.
+  const other = (
+    await call("/api/owners", { method: "POST", body: { name: "Other" } })
+  ).json.key;
+  assert.deepEqual(
+    (await call(`/api/tools/${slug}/versions`, { owner: other })).json.versions,
+    [],
+  );
+  assert.equal(
+    (
+      await call(`/api/tools/${slug}/restore`, {
+        method: "POST",
+        owner: other,
+        body: { version: 1 },
+      })
+    ).status,
+    404,
+  );
+});
+
+test("a stranger asks to join, the owner lets them in, and their link works", async () => {
+  const owner = (
+    await call("/api/owners", { method: "POST", body: { name: "Stan" } })
+  ).json.key;
+  const { id } = (
+    await call("/api/circles", {
+      method: "POST",
+      owner,
+      body: { name: "Class" },
+    })
+  ).json;
+  const { slug } = (
+    await call("/api/tools", {
+      method: "POST",
+      owner,
+      body: { title: "Prayers", circle: id, html: page("x") },
+    })
+  ).json;
+
+  const gate = await call(`/api/run/${slug}`, { member: "nobody" });
+  assert.equal(gate.status, 403);
+  assert.equal(
+    (
+      await call(`/api/run/${slug}/ask`, {
+        method: "POST",
+        body: {
+          name: "Ruth Miller",
+          phone: "253 555 0101",
+          note: "From Tuesday",
+        },
+      })
+    ).status,
+    200,
+  );
+  assert.equal(
+    (
+      await call(`/api/run/${slug}/ask`, {
+        method: "POST",
+        body: { name: "Harold" },
+      })
+    ).status,
+    200,
+  );
+
+  const { requests } = (await call("/api/requests", { owner })).json;
+  assert.equal(requests.length, 2);
+  const ruth = requests.find((r) => r.name === "Ruth Miller");
+  assert.equal(ruth.note, "From Tuesday");
+
+  const approved = (
+    await call(`/api/requests/${ruth.id}/approve`, { method: "POST", owner })
+  ).json;
+  assert.equal(approved.phone, "2535550101");
+  const token = new URL(approved.link).searchParams.get("m");
+  const opened = await call(`/api/run/${slug}`, { member: token });
+  assert.equal(opened.status, 200);
+  assert.equal(opened.json.me.name, "Ruth Miller");
+
+  // Handling a request twice is refused, and declining never adds anyone.
+  assert.equal(
+    (await call(`/api/requests/${ruth.id}/approve`, { method: "POST", owner }))
+      .status,
+    404,
+  );
+  const harold = requests.find((r) => r.name === "Harold");
+  const declined = (
+    await call(`/api/requests/${harold.id}/decline`, { method: "POST", owner })
+  ).json;
+  assert.equal(declined.link, null);
+  assert.equal(
+    (await call("/api/requests", { owner })).json.requests.length,
+    0,
+  );
+
+  // Someone else's owner key cannot approve requests on this tool.
+  await call(`/api/run/${slug}/ask`, {
+    method: "POST",
+    body: { name: "Mallory" },
+  });
+  const pending = (await call("/api/requests", { owner })).json.requests[0];
+  const other = (
+    await call("/api/owners", { method: "POST", body: { name: "Other" } })
+  ).json.key;
+  assert.equal(
+    (
+      await call(`/api/requests/${pending.id}/approve`, {
+        method: "POST",
+        owner: other,
+      })
+    ).status,
+    404,
+  );
+});
+
+test("presence: a member polling shows up as here now", async () => {
+  const owner = (
+    await call("/api/owners", { method: "POST", body: { name: "Stan" } })
+  ).json.key;
+  await call("/api/circles", {
+    method: "POST",
+    owner,
+    body: { name: "Class", members: [{ name: "Dottie" }] },
+  });
+  const { circles } = (await call("/api/owner", { owner })).json;
+  const { slug } = (
+    await call("/api/tools", {
+      method: "POST",
+      owner,
+      body: { title: "P", circle: circles[0].id, html: page("x") },
+    })
+  ).json;
+  const dottie = circles[0].members.find((m) => m.name === "Dottie");
+  assert.equal(dottie.here_now, false);
+  await call(`/api/run/${slug}/rpc`, {
+    method: "POST",
+    member: dottie.token,
+    body: { op: "stamp" },
+  });
+  const after = (await call("/api/owner", { owner })).json;
+  assert.equal(
+    after.circles[0].members.find((m) => m.name === "Dottie").here_now,
+    true,
+  );
+  assert.equal(after.tools[0].here_now, 1);
+});

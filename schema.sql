@@ -70,3 +70,41 @@ create table if not exists opens (
   at          timestamptz not null default now()
 );
 create index if not exists opens_tool_id_idx on opens(tool_id);
+
+-- Every change to a tool keeps the version before it, so "go back" always
+-- works. Docs taught people that nothing they do is permanent; a tool that
+-- one bad edit can break with no undo teaches the opposite.
+create table if not exists tool_versions (
+  id          bigserial primary key,
+  tool_id     text not null references tools(id) on delete cascade,
+  version     integer not null,
+  html        text not null,
+  request     text not null default '',
+  created_at  timestamptz not null default now(),
+  unique (tool_id, version)
+);
+alter table tools add column if not exists request text not null default '';
+
+-- Presence: the last time each member had the tool open, refreshed by the
+-- runner's poll. "Here now" is anyone seen in the last two minutes.
+alter table members add column if not exists last_seen timestamptz;
+
+-- Someone opens a tool they were not given, and asks. The owner lets them in
+-- with one tap, which is the Google Docs flow nobody else in this category has.
+create table if not exists access_requests (
+  id          text primary key,
+  tool_id     text not null references tools(id) on delete cascade,
+  name        text not null,
+  phone       text,
+  note        text not null default '',
+  status      text not null default 'pending',
+  created_at  timestamptz not null default now()
+);
+create index if not exists access_requests_tool_idx on access_requests(tool_id, status);
+
+-- Try before it counts. A change Claude makes lands here first, the owner sees
+-- it working on the real data, and only "Keep this" swaps it in. Replit and
+-- Lovable users describe the opposite: each fix going live and breaking what
+-- worked (research/vibe-coding-vs-docs.md, pain 1).
+alter table tools add column if not exists draft_html text;
+alter table tools add column if not exists draft_request text;
