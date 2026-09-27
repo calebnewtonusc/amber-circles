@@ -96,16 +96,27 @@ const TOOLS = [
     },
   },
   {
-    name: "make_tool",
+    name: "propose_plan",
     description:
-      "Start building a new tool for this chat. Takes about a minute and runs in the background; the conversation continues.",
+      "Before building anything new, record the plan you are about to read back: what it does, for whom, what it keeps, and what it will NOT do yet. Then read it back in two or three sentences and ask 'Should I go ahead and make it?'. make_tool is refused until a plan exists and the person said yes.",
     input_schema: {
       type: "object",
       properties: {
-        request: {
-          type: "string",
-          description: "one clear description of what to build",
-        },
+        plan: { type: "string", description: "the read-back, in plain words" },
+        request: { type: "string", description: "the full build instruction for the builder, with every detail gathered" },
+      },
+      required: ["plan", "request"],
+    },
+  },
+  {
+    name: "make_tool",
+    description:
+      "Build the planned tool, only after propose_plan and a yes from the person, or when they said to just build it. Takes about a minute in the background; the conversation continues.",
+    input_schema: {
+      type: "object",
+      properties: {
+        request: { type: "string", description: "the full build instruction; normally the request from propose_plan" },
+        just_build: { type: "boolean", description: "true only when the person explicitly said to skip the questions and just build" },
       },
       required: ["request"],
     },
@@ -151,7 +162,7 @@ function system({ chatName, people, speaker, focus, memories, tools }) {
     : "(nothing made yet)";
   const index = memories.length
     ? memories
-        .map((m) => `- [${m.modality}] ${m.name}: ${m.description}`)
+        .map((m) => `- [${m.modality}] ${m.name}${m.about ? ` (about ${m.about})` : ""}: ${m.description}`)
         .join("\n")
     : "(nothing yet)";
   return `You are Amber, the builder that lives inside one group chat. You know everything this chat has made and everything its people have told you, and you remember it. Think of yourself as the friend in the chat who happens to build software.
@@ -169,12 +180,23 @@ How you work, and why:
 - Read before you explain how a tool works (read_tool), because a group member may have changed it since you last looked, and the code is the truth.
 - Remember as it happens, in the same turn: a preference ("Ruth can't read small text"), a decision, a wish, what was kept, what was put back. Waiting for later is how facts get lost. One fact per memory; update by reusing the name.
 - Modality is not a style choice. [wish] is asked for and not done. [done] is live for everyone. [declined] was tried and put back. Never say something is done unless it is done: the people here will act on what you say.
-- Changes and new tools run in the background for about a minute. Start them with change_tool or make_tool and keep talking; the phone tells everyone when it is ready. Changes land as a draft only this chat can try until someone taps Keep.
+- A NEW app is never built on the first message. Interview first, like a good forward deployed engineer, because people often do not know what they need until you ask about their life (Mom Test; Palantir FDE practice). Ask at most THREE short questions (Caleb, 2026-09-27), ONE per turn, each answerable in a word, with choices when you can. Skip anything they already told you. In this order, stopping as soon as you have enough:
+  1. The one job it must do well, asked about their life: "How do you handle this now, and what's annoying about it?"
+  2. What it needs to keep track of, with choices: "Names only, or names and phone numbers?"
+  3. The look and feel, always asked: "What vibe do you want: clean and simple, warm and friendly, or bold and fun?"
+  Anyone in the chat can build and publish; never ask who is allowed.
+  Then call propose_plan and read the plan back in two or three sentences, including one thing it will not do yet, and ask "Should I go ahead and make it?" Build only after a yes (make_tool). If they say "just build it", respect it: pick the most common choices, say in one sentence what you assumed, and build with just_build.
+- When someone comes back after trying an app, check in first with one question about what they did, not their opinion: "What happened when you tried adding one?" (NN/g task-based testing).
+- A change you could describe in one sentence ("make the title bigger") needs no plan: start it and say what you are doing. A big change gets one short read-back first.
+- Changes and new tools run in the background for about a minute. Start them and keep talking; the phone tells everyone when it is ready. Changes land as a draft only this chat can try until someone publishes them.
 - A thought for the group to decide on later is a comment (leave_comment), not a change.
 - If what they said stops mid-thought, they let go of the talk button early: say "Go ahead, I'm listening." and do nothing else.
 - If you are not sure what they mean, ask one short question. After two unclear tries, offer one concrete choice ("Bigger writing, or a different color?").
 
+What people say reaches you through speech recognition on a phone, so it may contain misheard words, filler, or half sentences: go by what they meant, not the literal words (jarvis, reply/prompts/system.py ASR_NOTE). Today is ${new Date().toDateString()}.
+
 You are heard, not read. The people here may be in their seventies:
+- Your first sentence is seven words or fewer, so the voice starts right away (RealtimeVoiceChat system_prompt.txt).
 - At most three short sentences. Plain words, no code words, no links, no lists, no emojis, no em dashes.
 - Acknowledge a change with "On it." plus the detail only when mishearing it would go somewhere wrong. Never start with "Okay" or "Yes".
 - Use people's names. If someone else asked for something, say so by name.
@@ -234,8 +256,26 @@ export async function converse({ db, chat, speaker, focusSlug, text }) {
       await db.remember({ ...memory, by: speaker.id });
       return { saved: memory.name };
     },
-    make_tool: async ({ request }) => {
-      actions.push({ type: "make", request });
+    propose_plan: async ({ plan, request }) => {
+      await db.setPlan({ plan, request });
+      return { recorded: true, next: "Read the plan back and ask if you should go ahead." };
+    },
+    make_tool: async ({ request, just_build }) => {
+      // Asking cannot be left to the model: models answer ambiguous requests
+      // over 95% of the time instead of asking (arXiv 2605.25284). The build
+      // is refused unless a plan was read back and confirmed, or the person
+      // literally said to just build it.
+      const plan = await db.plan();
+      const saidJustBuild = /\b(just (build|make|do) it|skip the questions|go ahead and (build|make))\b/i.test(text);
+      const saidYes = /\b(yes|yeah|yep|sure|go ahead|do it|sounds good|perfect|make it|build it|please)\b/i.test(text);
+      if (!(just_build && saidJustBuild) && !(plan && saidYes)) {
+        return {
+          refused: true,
+          reason: plan ? "They have not said yes to the plan yet. Ask." : "No plan yet. Ask your questions, then propose_plan and read it back.",
+        };
+      }
+      await db.setPlan(null);
+      actions.push({ type: "make", request: plan && !just_build ? plan.request : request });
       return {
         started: true,
         note: "Building in the background for about a minute.",
@@ -305,4 +345,39 @@ export async function converse({ db, chat, speaker, focusSlug, text }) {
     messages.push({ role: "user", content: results });
   }
   return { reply: reply || "Say that one more time for me?", actions };
+}
+
+// After every turn, memory is extracted by a separate small call instead of
+// depending on the agent to remember to save mid-conversation (mem0's
+// additive extraction, mem0/memory/main.py _add_to_vector_store). It runs
+// after the reply is sent, so it adds nothing to what the person waits for.
+export async function extractMemories({ index, recent, speaker, said, reply, today }) {
+  const response = await anthropic().messages.create({
+    model: "claude-haiku-4-5",
+    max_tokens: 800,
+    system: `You keep the memory for a group chat's assistant. From the newest exchange, extract facts worth remembering later: preferences, needs, decisions, wishes for the apps, what was done, what was tried and put back, who is who. Skip small talk and anything already in the index unless it changed.
+
+Rules, each from something that broke elsewhere:
+- One fact per memory. Reuse an existing name when the fact is about the same thing, so it updates instead of duplicating.
+- When a fact changes, write the transition: "Was X, now Y because Z, per <name>". A silent overwrite loses why it changed.
+- "about" is the person the fact is about, which is not always the speaker: "Ruth can't read small text", said by her son, is about Ruth.
+- Resolve relative dates against today (${today}). Never store "tomorrow" or "Sunday"; store the date.
+- modality: wish (asked for, not done), decided, done (live for everyone: ONLY when the conversation shows [Kept] or it was published), declined (tried and put back), fact. Starting a build is not done; a build in progress is decided.
+- When in doubt, skip. A wrong memory is worse than a missing one here, because the assistant will say it out loud.
+
+Reply with JSON only: {"memories":[{"name":"short-kebab-slug","description":"one line","body":"the fact","modality":"wish|decided|done|declined|fact","about":"a name or empty"}]} and an empty list when there is nothing.`,
+    messages: [
+      {
+        role: "user",
+        content: `Memory index:\n${index || "(empty)"}\n\nRecent conversation:\n${recent}\n\nNewest exchange:\n${speaker}: ${said}\nAmber: ${reply}`,
+      },
+    ],
+  });
+  const raw = response.content.filter((b) => b.type === "text").map((b) => b.text).join("");
+  try {
+    const parsed = JSON.parse(raw.slice(raw.indexOf("{"), raw.lastIndexOf("}") + 1));
+    return Array.isArray(parsed.memories) ? parsed.memories.slice(0, 6) : [];
+  } catch {
+    return [];
+  }
 }

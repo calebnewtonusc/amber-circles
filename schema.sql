@@ -192,3 +192,27 @@ create table if not exists chat_memories (
   updated_at   timestamptz not null default now(),
   unique (circle_id, name)
 );
+
+-- From mem0 (mem0/memory/main.py, ADDITIVE_EXTRACTION_PROMPT): a changed fact
+-- is recorded as a transition, and the old version is kept rather than
+-- overwritten. who said it and who it is about are different people.
+alter table chat_memories add column if not exists about text;
+create table if not exists chat_memory_history (
+  id          text primary key,
+  circle_id   text not null references circles(id) on delete cascade,
+  name        text not null,
+  old_body    text not null,
+  old_modality text not null,
+  new_body    text not null,
+  member_id   text references members(id) on delete set null,
+  at          timestamptz not null default now()
+);
+
+-- A plan read back and waiting for a yes. make_tool is refused without one
+-- (agent.js), because asking cannot be left to the model.
+create table if not exists chat_plans (
+  circle_id  text primary key references circles(id) on delete cascade,
+  plan       text not null,
+  request    text not null,
+  at         timestamptz not null default now()
+);

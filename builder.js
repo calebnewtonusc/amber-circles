@@ -142,7 +142,10 @@ export async function build({
       text += event.delta.text;
       if (text.length - lastReport > 400) {
         lastReport = text.length;
-        onProgress?.({ stage: "writing", chars: text.length });
+        // The half-written page goes along too, so the phone can show the
+        // interface appearing as it is written, and say what is being added.
+        const partial = text.includes("```html") ? text.slice(text.indexOf("```html") + 7) : "";
+        onProgress?.({ stage: "writing", chars: text.length, html: partial.slice(0, 120000), doing: narrate(partial) });
       }
     }
   }
@@ -236,4 +239,57 @@ export async function describeChange({ before, after, request }) {
     ],
   });
   return message.content.filter((b) => b.type === "text").map((b) => b.text).join("").trim();
+}
+
+// What the builder is adding right now, in words a person would use, from
+// the newest heading, button or field in the half-written page.
+export function narrate(html) {
+  const found = [
+    ...html.matchAll(/<(h1|h2|h3|button|label)[^>]*>([^<]{2,60})</gi),
+    ...html.matchAll(/placeholder="([^"]{2,60})"/gi),
+  ].sort((a, b) => a.index - b.index);
+  const last = found.at(-1);
+  if (!last) return html.includes("<style") && !html.includes("<body") ? "Choosing the look" : "Setting up the page";
+  if (last.length === 2) return `Adding a box for "${last[1].trim()}"`;
+  const [, tag, words] = last;
+  const clean = words.trim().replace(/\s+/g, " ");
+  if (/^h/i.test(tag)) return `Adding the "${clean}" section`;
+  if (/^button$/i.test(tag)) return `Adding the "${clean}" button`;
+  return `Adding "${clean}"`;
+}
+
+// A change as a patch, not a rewrite. Rewriting the whole page for "make the
+// names bigger" took about a minute and could move things nobody asked about;
+// Bob-the-Builder's rule is to patch one thing and leave the rest alone
+// (projects/bob-the-builder README, "Bob edits a patch"). Each edit must match
+// the current page exactly once, or the whole patch is refused and the caller
+// falls back to a full rebuild.
+export async function patch({ request, currentHtml, circleName }) {
+  const message = await anthropic().messages.create({
+    model: "claude-sonnet-5",
+    max_tokens: 6000,
+    system:
+      'You change one small web tool by returning exact text edits. Reply with JSON only: {"edits":[{"find":"<exact text copied from the file, long enough to appear only once>","replace":"<the new text>"}]}. Change only what was asked, keep collection names and everything else identical. If the request needs a large restructure, reply {"edits":[],"rebuild":true}.',
+    messages: [
+      {
+        role: "user",
+        content: `Group: ${circleName}\n\nThe file:\n\`\`\`html\n${currentHtml}\n\`\`\`\n\nWhat to change: ${request}`,
+      },
+    ],
+  });
+  const raw = message.content.filter((b) => b.type === "text").map((b) => b.text).join("");
+  let parsed;
+  try {
+    parsed = JSON.parse(raw.slice(raw.indexOf("{"), raw.lastIndexOf("}") + 1));
+  } catch {
+    return null;
+  }
+  if (parsed.rebuild || !Array.isArray(parsed.edits) || !parsed.edits.length) return null;
+  let html = currentHtml;
+  for (const edit of parsed.edits) {
+    if (typeof edit.find !== "string" || typeof edit.replace !== "string" || !edit.find) return null;
+    if (html.split(edit.find).length !== 2) return null;
+    html = html.replace(edit.find, () => edit.replace);
+  }
+  return { html, edits: parsed.edits.length, usage: message.usage };
 }

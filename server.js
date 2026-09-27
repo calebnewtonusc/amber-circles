@@ -14,8 +14,8 @@ import { serve } from "@hono/node-server";
 import { serveStatic } from "@hono/node-server/serve-static";
 import pg from "pg";
 import { streamSSE } from "hono/streaming";
-import { build, describeChange, explain, talk, titleFrom } from "./builder.js";
-import { converse } from "./agent.js";
+import { build, describeChange, explain, patch, talk, titleFrom } from "./builder.js";
+import { converse, extractMemories } from "./agent.js";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const PORT = Number(process.env.PORT || 8787);
@@ -1065,7 +1065,16 @@ app.post("/api/build", async (c) => {
     const send = (event, data) =>
       sse.writeSSE({ event, data: JSON.stringify(data) });
     try {
-      const { html, usage } = await build({
+      // A change to an existing tool tries a patch first: seconds, and
+      // nothing moves that was not asked about. A full rebuild only when the
+      // patch does not apply cleanly.
+      let patched = null;
+      if (existing) {
+        send("progress", { stage: "writing", chars: 0, doing: "Making the change" });
+        patched = await patch({ request, currentHtml: existing.html, circleName: circle.name }).catch(() => null);
+        if (patched) send("progress", { stage: "checking", chars: patched.html.length, html: patched.html, doing: `Changed ${patched.edits} ${patched.edits === 1 ? "thing" : "things"}` });
+      }
+      const { html, usage } = patched || await build({
         request,
         circleName: circle.name,
         people: people.map((person) => person.name),
@@ -1404,7 +1413,7 @@ function chatData(circleId, owner) {
       ).rows,
     people: async () => (await pool.query("select id, name from members where circle_id = $1 order by created_at", [circleId])).rows,
     memories: async () =>
-      (await pool.query("select name, description, modality from chat_memories where circle_id = $1 order by updated_at desc limit 200", [circleId])).rows,
+      (await pool.query("select name, description, modality, about from chat_memories where circle_id = $1 order by updated_at desc limit 200", [circleId])).rows,
     recall: async (name) =>
       (
         await pool.query(
@@ -1413,15 +1422,25 @@ function chatData(circleId, owner) {
           [circleId, name],
         )
       ).rows[0],
-    remember: async ({ name, description, body, modality, by }) =>
-      pool.query(
-        `insert into chat_memories (id, circle_id, name, description, body, modality, member_id)
-           values ($1, $2, $3, $4, $5, $6, $7)
+    remember: async ({ name, description, body, modality, by, about }) => {
+      const key = String(name).slice(0, 80);
+      const {
+        rows: [old],
+      } = await pool.query("select body, modality from chat_memories where circle_id = $1 and name = $2", [circleId, key]);
+      if (old && old.body !== String(body))
+        await pool.query(
+          "insert into chat_memory_history (id, circle_id, name, old_body, old_modality, new_body, member_id) values ($1, $2, $3, $4, $5, $6, $7)",
+          [newId("hist"), circleId, key, old.body, old.modality, String(body).slice(0, 4000), by || null],
+        );
+      return pool.query(
+        `insert into chat_memories (id, circle_id, name, description, body, modality, member_id, about)
+           values ($1, $2, $3, $4, $5, $6, $7, $8)
          on conflict (circle_id, name) do update set description = excluded.description, body = excluded.body,
-           modality = excluded.modality, member_id = excluded.member_id, updated_at = now()`,
-        [newId("mem"), circleId, String(name).slice(0, 80), String(description).slice(0, 300), String(body).slice(0, 4000),
-         ["wish", "decided", "done", "declined", "fact"].includes(modality) ? modality : "fact", by || null],
-      ),
+           modality = excluded.modality, about = coalesce(excluded.about, chat_memories.about), updated_at = now()`,
+        [newId("mem"), circleId, key, String(description).slice(0, 300), String(body).slice(0, 4000),
+         ["wish", "decided", "done", "declined", "fact"].includes(modality) ? modality : "fact", by || null, about ? String(about).slice(0, 80) : null],
+      );
+    },
     readTool: async (slug) => {
       const {
         rows: [tool],
@@ -1451,6 +1470,23 @@ function chatData(circleId, owner) {
           [circleId, limit],
         )
       ).rows,
+    // The plan waiting for a yes, per chat. Kept for 30 minutes; a yes
+    // after that should hear the plan again.
+    plan: async () =>
+      (
+        await pool.query(
+          "select plan, request from chat_plans where circle_id = $1 and at > now() - interval '30 minutes'",
+          [circleId],
+        )
+      ).rows[0],
+    setPlan: async (value) =>
+      value
+        ? pool.query(
+            `insert into chat_plans (circle_id, plan, request) values ($1, $2, $3)
+             on conflict (circle_id) do update set plan = excluded.plan, request = excluded.request, at = now()`,
+            [circleId, String(value.plan).slice(0, 2000), String(value.request).slice(0, 4000)],
+          )
+        : pool.query("delete from chat_plans where circle_id = $1", [circleId]),
     comment: async (slug, text, memberId) => {
       const {
         rows: [tool],
@@ -1480,6 +1516,21 @@ app.post("/api/chats/:id/agent", async (c) => {
     `insert into chat_turns (id, circle_id, tool_slug, member_id, role, text) values ($1, $2, $3, $4, 'person', $5), ($6, $2, $3, null, 'amber', $7)`,
     [newId("turn"), circleId, body.slug || null, owner.chatMember.id, text, newId("turn"), result.reply],
   );
+  // Memory is extracted after the reply is on its way, never in the path of it.
+  const data = chatData(circleId, owner);
+  Promise.all([data.memories(), data.recentTurns(12)])
+    .then(([memories, recent]) =>
+      extractMemories({
+        index: memories.map((m) => `- [${m.modality}] ${m.name}${m.about ? ` (about ${m.about})` : ""}: ${m.description}`).join("\n"),
+        recent: recent.map((t) => `${t.role === "amber" ? "Amber" : t.role === "event" ? "[event]" : t.name || "Someone"}: ${t.text}`).join("\n"),
+        speaker: owner.chatMember.name,
+        said: text,
+        reply: result.reply,
+        today: new Date().toISOString().slice(0, 10),
+      }),
+    )
+    .then((found) => Promise.all(found.map((memory) => data.remember({ ...memory, by: owner.chatMember.id }))))
+    .catch((error) => console.error("memory extraction failed", error.message));
   // What the agent set in motion, written where it will read it next turn,
   // so a question from someone else never restarts a change already running.
   for (const action of result.actions) {
