@@ -1047,3 +1047,4 @@ body.runner {
    pattern screen readers are tested against anyway. */
 .skip { position: absolute; left: 0; top: 0; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
 .skip:focus { width: auto; height: auto; clip-path: none; left: var(--space-4); top: var(--space-4); z-index: 99; background: var(--sheet); padding: var(--space-2) var(--space-3); border: 1px solid var(--ink); }
+.restore { display: flex; flex-direction: column; align-items: end; gap: 2px; }

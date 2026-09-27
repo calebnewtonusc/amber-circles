@@ -108,3 +108,10 @@ create index if not exists access_requests_tool_idx on access_requests(tool_id, 
 -- worked (research/vibe-coding-vs-docs.md, pain 1).
 alter table tools add column if not exists draft_html text;
 alter table tools add column if not exists draft_request text;
+
+-- The entries as they stood when each version went live, so going back can
+-- bring the data back too. Replit's rollbacks leave the database alone by
+-- default, and its agent deleted SaaStr's production data
+-- (research/vibe-coding-vs-docs.md, pain 4). Null when the snapshot would
+-- have been too large to keep.
+alter table tool_versions add column if not exists data_snapshot jsonb;

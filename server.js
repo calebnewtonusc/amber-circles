@@ -245,6 +245,20 @@ async function publishTool(
   return { slug, circle: target.name };
 }
 
+// Guessed, never measured: two megabytes is roughly 2,000 prayer requests
+// with their authors, far past a real group's semester, and small enough
+// that keeping one per version costs nothing worth counting.
+const MAX_SNAPSHOT_BYTES = 2 * 1024 * 1024;
+
+async function snapshotRecords(client, toolId) {
+  const { rows } = await client.query(
+    "select id, collection, data, author_id, created_at, updated_at from records where tool_id = $1 order by created_at",
+    [toolId],
+  );
+  const json = JSON.stringify(rows);
+  return Buffer.byteLength(json) > MAX_SNAPSHOT_BYTES ? null : json;
+}
+
 async function updateTool(
   owner,
   slug,
@@ -272,13 +286,17 @@ async function updateTool(
     );
     if (!rows[0])
       throw new HttpError(404, "No tool with that link belongs to you.");
+    // The entries as they stand at this moment travel with the new version,
+    // so "go back" can offer to put them back too.
+    const snapshot = await snapshotRecords(client, rows[0].id);
     await client.query(
-      "insert into tool_versions (tool_id, version, html, request) values ($1, $2, $3, $4) on conflict do nothing",
+      "insert into tool_versions (tool_id, version, html, request, data_snapshot) values ($1, $2, $3, $4, $5) on conflict do nothing",
       [
         rows[0].id,
         rows[0].version,
         rows[0].html,
         String(request).slice(0, 4000),
+        snapshot,
       ],
     );
     await client.query("commit");
@@ -1057,7 +1075,9 @@ app.post("/api/tools/:slug/discard", async (c) => {
 app.get("/api/tools/:slug/versions", async (c) => {
   const owner = await requireOwner(c);
   const { rows } = await pool.query(
-    `select v.version, v.request, v.created_at, (v.version = t.version) as current
+    `select v.version, v.request, v.created_at, (v.version = t.version) as current,
+            (v.data_snapshot is not null) as has_entries,
+            coalesce(jsonb_array_length(v.data_snapshot), 0) as entry_count
        from tool_versions v join tools t on t.id = v.tool_id
       where t.owner_id = $1 and t.slug = $2 order by v.version desc limit 30`,
     [owner.id, c.req.param("slug")],
@@ -1074,12 +1094,43 @@ app.post("/api/tools/:slug/restore", async (c) => {
     [owner.id, c.req.param("slug"), Number(version)],
   );
   if (!rows[0]) throw new HttpError(404, "That version is not there any more.");
-  return c.json(
-    await updateTool(owner, c.req.param("slug"), {
-      html: rows[0].html,
-      request: `Went back to version ${Number(version)}`,
-    }),
-  );
+  const body = await c.req.json().catch(() => ({}));
+  const withEntries = Boolean(body.entries);
+  // updateTool snapshots the entries as they are now into the new version,
+  // so even putting old entries back can itself be undone.
+  const result = await updateTool(owner, c.req.param("slug"), {
+    html: rows[0].html,
+    request: `Went back to version ${Number(version)}${withEntries ? ", entries too" : ""}`,
+  });
+  if (withEntries) {
+    const { rows: [old] } = await pool.query(
+      `select v.data_snapshot, t.id as tool_id from tool_versions v join tools t on t.id = v.tool_id
+        where t.owner_id = $1 and t.slug = $2 and v.version = $3`,
+      [owner.id, c.req.param("slug"), Number(version)],
+    );
+    if (!old?.data_snapshot) throw new HttpError(409, "That version has no saved entries to put back. The tool itself went back.");
+    const client = await pool.connect();
+    try {
+      await client.query("begin");
+      await client.query("delete from records where tool_id = $1", [old.tool_id]);
+      // One statement for the whole snapshot. An author who has since left
+      // the group keeps their entry, unattributed, rather than blocking it.
+      await client.query(
+        `insert into records (id, tool_id, collection, data, author_id, created_at, updated_at)
+         select r.id, $2, r.collection, r.data, m.id, r.created_at, r.updated_at
+           from jsonb_to_recordset($1::jsonb) as r(id text, collection text, data jsonb, author_id text, created_at timestamptz, updated_at timestamptz)
+           left join members m on m.id = r.author_id`,
+        [JSON.stringify(old.data_snapshot), old.tool_id],
+      );
+      await client.query("commit");
+    } catch (error) {
+      await client.query("rollback");
+      throw error;
+    } finally {
+      client.release();
+    }
+  }
+  return c.json(result);
 });
 
 // Guessed, never measured: a real circle is a few dozen people, so fifty

@@ -331,3 +331,35 @@ test("people remove their own entries; only the owner removes anyone's", async (
   const slot = await add("Harold", "bring rolls");
   assert.equal((await call(`/api/run/${slug}/rpc`, { method: "POST", member: token("Ruth"), body: { op: "update", collection: "prayers", id: slot, data: { taken: "Ruth" } } })).status, 200);
 });
+
+test("going back can put the entries back too, and that is itself undoable", async () => {
+  const stan = (await call("/api/owners", { method: "POST", body: { name: "Stan" } })).json.key;
+  await call("/api/circles", { method: "POST", owner: stan, body: { name: "Class", members: [{ name: "Ruth" }] } });
+  const { circles } = (await call("/api/owner", { owner: stan })).json;
+  const { slug } = (await call("/api/tools", { method: "POST", owner: stan, body: { title: "P", circle: circles[0].id, html: page("one") } })).json;
+  const ruth = circles[0].members.find((m) => m.name === "Ruth").token;
+  const rpc = (body) => call(`/api/run/${slug}/rpc`, { method: "POST", member: ruth, body });
+  const texts = async () => (await rpc({ op: "list", collection: "prayers" })).json.result.map((r) => r.data.text).sort();
+
+  await rpc({ op: "add", collection: "prayers", data: { text: "Carol" } });
+  const dan = (await rpc({ op: "add", collection: "prayers", data: { text: "Dan" } })).json.result.id;
+  await call(`/api/tools/${slug}`, { method: "PUT", owner: stan, body: { html: page("two") } }); // v2 carries Carol and Dan
+  await rpc({ op: "remove", collection: "prayers", id: dan });
+  await rpc({ op: "add", collection: "prayers", data: { text: "Walt" } });
+  assert.deepEqual(await texts(), ["Carol", "Walt"]);
+
+  const back = await call(`/api/tools/${slug}/restore`, { method: "POST", owner: stan, body: { version: 2, entries: true } });
+  assert.equal(back.status, 200);
+  assert.deepEqual(await texts(), ["Carol", "Dan"], "the entries are exactly as they were at version 2");
+  const byRuth = (await rpc({ op: "list", collection: "prayers" })).json.result.every((r) => r.author.name === "Ruth");
+  assert.ok(byRuth, "authorship survives the round trip");
+
+  // The restore made version 3, which snapshotted Carol and Walt first.
+  const undo = await call(`/api/tools/${slug}/restore`, { method: "POST", owner: stan, body: { version: 3, entries: true } });
+  assert.equal(undo.status, 200);
+  assert.deepEqual(await texts(), ["Carol", "Walt"], "putting entries back can be undone");
+
+  // A plain go-back never touches the entries.
+  await call(`/api/tools/${slug}/restore`, { method: "POST", owner: stan, body: { version: 1 } });
+  assert.deepEqual(await texts(), ["Carol", "Walt"]);
+});

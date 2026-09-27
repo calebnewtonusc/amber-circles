@@ -1138,7 +1138,11 @@ async function toolPage(slug) {
           <ol class="versions">${versions
             .map(
               (version) => `<li><div><b>Version ${version.version}</b><span>${esc(version.request || "The first version")}</span><span class="fine">${timeAgo(version.created_at)}</span></div>${
-                version.current ? '<span class="tag">Live now</span>' : `<button class="btn btn-sm" data-restore="${version.version}">Go back to this</button>`
+                version.current
+                  ? '<span class="tag">Live now</span>'
+                  : `<div class="restore"><button class="btn btn-sm" data-restore="${version.version}">Go back to this</button>${
+                      version.has_entries ? `<button class="btn btn-sm btn-ghost" data-restore="${version.version}" data-entries="${version.entry_count}">Entries too (${version.entry_count})</button>` : ""
+                    }</div>`
               }</li>`,
             )
             .join("")}</ol>
@@ -1165,9 +1169,18 @@ async function toolPage(slug) {
   });
   app.querySelectorAll("[data-restore]").forEach((button) =>
     button.addEventListener("click", async () => {
-      if (!confirm(`Go back to version ${button.dataset.restore}? Everyone will get that version. The saved entries stay.`)) return;
-      await api(`/api/tools/${slug}/restore`, { method: "POST", body: { version: Number(button.dataset.restore) } });
-      toast(`Back to version ${button.dataset.restore}`);
+      const entries = button.dataset.entries !== undefined;
+      const question = entries
+        ? `Put version ${button.dataset.restore} back, with the list exactly as it was then (${button.dataset.entries} entries)? Anything added since goes away, and you can undo this from this same list.`
+        : `Go back to version ${button.dataset.restore}? Everyone will get that version. The saved entries stay as they are.`;
+      if (!confirm(question)) return;
+      try {
+        await api(`/api/tools/${slug}/restore`, { method: "POST", body: { version: Number(button.dataset.restore), entries } });
+      } catch (error) {
+        toast(error.message);
+        return toolPage(slug);
+      }
+      toast(entries ? `Back to version ${button.dataset.restore}, entries too` : `Back to version ${button.dataset.restore}`);
       toolPage(slug);
     }),
   );
