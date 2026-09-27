@@ -902,6 +902,22 @@ async function runner(slug) {
       <span class="run-me">You're ${esc(session.me.name.split(" ")[0])}</span>
       ${isOwnerHere ? "" : `<button class="btn btn-sm btn-ghost" id="copy-tool">Make your own</button>`}
     </header>`;
+  // The first open says whose this is and that nothing is being signed up
+  // for. Older people are taught that a texted link is a scam, and a tool
+  // nobody trusts enough to tap is a tool nobody uses.
+  const welcomeKey = `amber.welcomed.${slug}`;
+  if (!isOwnerHere && !store.get(welcomeKey)) {
+    document.body.classList.add("welcoming");
+    app.querySelector(".run-bar").insertAdjacentHTML(
+      "afterend",
+      `<div class="welcome" role="note"><p><b>${esc(session.owner)}</b> shared this with ${esc(session.circle)}, just for the group. There is nothing to sign up for.</p><button class="btn btn-sm" id="welcome-ok">Got it</button></div>`,
+    );
+    app.querySelector("#welcome-ok").addEventListener("click", () => {
+      store.set(welcomeKey, "1");
+      document.body.classList.remove("welcoming");
+      app.querySelector(".welcome")?.remove();
+    });
+  }
   activeCleanup = mountTool({ container: app, slug, token, session });
   app.querySelector("#copy-tool")?.addEventListener("click", () => copyTool(slug, token, session));
 }

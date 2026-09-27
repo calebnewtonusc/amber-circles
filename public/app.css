@@ -1048,3 +1048,11 @@ body.runner {
 .skip { position: absolute; left: 0; top: 0; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
 .skip:focus { width: auto; height: auto; clip-path: none; left: var(--space-4); top: var(--space-4); z-index: 99; background: var(--sheet); padding: var(--space-2) var(--space-3); border: 1px solid var(--ink); }
 .restore { display: flex; flex-direction: column; align-items: end; gap: 2px; }
+
+/* ---------- first open: whose this is ---------- */
+.welcome { position: fixed; inset: var(--bar-height) 0 auto 0; height: var(--welcome-height); z-index: 4; display: flex; align-items: center; gap: var(--space-3); padding: 0 var(--space-4); background-color: var(--gold-100); border-bottom: 1px solid color-mix(in srgb, var(--gold-700) 35%, transparent); }
+.welcome p { font-size: 15px; line-height: 1.35; color: var(--ink); flex: 1; }
+.welcome b { font-weight: 600; }
+:root { --welcome-height: 84px; }
+body.welcoming .run-frame { inset: calc(var(--bar-height) + var(--welcome-height)) 0 0 0; height: calc(100% - var(--bar-height) - var(--welcome-height)); }
+@media (min-width: 700px) { :root { --welcome-height: 56px; } }
