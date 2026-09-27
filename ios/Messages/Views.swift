@@ -101,26 +101,16 @@ struct HomeView: View {
                         }
                         ErrorLine()
                         if let tools = store.overview?.tools, !tools.isEmpty {
-                            LazyVGrid(columns: [GridItem(.adaptive(minimum: 150), spacing: 12)], spacing: 12) {
+                            VStack(spacing: 10) {
                                 ForEach(tools) { tool in
-                                    Button { store.route = .tool(tool.slug); store.host?.expand() } label: { Tile(tool: tool) }
-                                        .buttonStyle(.plain)
+                                    Button { store.route = .tool(tool.slug); store.host?.expand() } label: {
+                                        AppRow(tool: tool, unshared: store.unpublished.contains(tool.slug))
+                                    }
+                                    .buttonStyle(.plain)
                                 }
                             }
                         } else if store.loading {
                             ProgressView().frame(maxWidth: .infinity, minHeight: 80)
-                        }
-                        if (store.talk[""] ?? []).isEmpty && store.changing["__new"] == nil {
-                            VStack(alignment: .leading, spacing: 10) {
-                                Text("Try saying").font(Amber.font(15, .bold)).foregroundStyle(Amber.muted)
-                                ForEach(ideas, id: \.self) { idea in
-                                    Button { Task { await store.say("", "Make \(idea.lowercased())") } } label: {
-                                        Text(idea).font(Amber.font(17)).foregroundStyle(Amber.ink)
-                                            .frame(maxWidth: .infinity, alignment: .leading).padding(14)
-                                            .block()
-                                    }
-                                }
-                            }
                         }
                         ForEach(store.talk[""] ?? []) { turn in
                             Bubble(text: turn.text, mine: turn.mine)
@@ -165,7 +155,35 @@ struct HomeView: View {
             .background(Amber.paper)
             .overlay(Rectangle().fill(Amber.hairline).frame(height: 1), alignment: .top)
         }
-        .task { await store.loadTalk("") }
+        .task {
+            await store.refresh()
+            await store.loadTalk("")
+        }
+    }
+}
+
+/// One app the chat made, as a row you tap to talk to it, change it or
+/// comment on it.
+struct AppRow: View {
+    let tool: ToolItem
+    var unshared = false
+    var body: some View {
+        HStack(spacing: 14) {
+            RoundedRectangle(cornerRadius: 10, style: .continuous).fill(Amber.wash)
+                .frame(width: 48, height: 48)
+                .overlay(Text(String(tool.title.prefix(1))).font(Amber.font(22, .heavy)).foregroundStyle(Amber.ink))
+            VStack(alignment: .leading, spacing: 3) {
+                Text(tool.title).font(Amber.font(18, .heavy)).foregroundStyle(Amber.ink).lineLimit(1)
+                Text(unshared ? "Not shared with the chat yet" : tool.has_draft ? "A change is waiting" : "\(tool.made_by.map { "By \($0)" } ?? "Made here") · \(timeAgo(tool.updated_at))")
+                    .font(Amber.font(15)).foregroundStyle(unshared || tool.has_draft ? Amber.link : Amber.muted).lineLimit(1)
+            }
+            Spacer(minLength: 0)
+            Image(systemName: "chevron.right").font(.system(size: 15, weight: .semibold)).foregroundStyle(Amber.muted)
+        }
+        .padding(12)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .block(lifted: true)
+        .contentShape(Rectangle())
     }
 }
 
@@ -271,6 +289,10 @@ struct ToolView: View {
                                 if let by = tool.made_by { Text("Made by \(by)").font(Amber.font(16, .bold)).foregroundStyle(Amber.body) }
                             }
                             safariCard(tool)
+                            if store.unpublished.contains(slug) {
+                                Button("Publish to the chat") { store.publish(slug) }
+                                    .buttonStyle(BlockButton(primary: true, full: true))
+                            }
                             ErrorLine()
                             conversation(tool)
                             DisclosureGroup("Comments from the chat (\(notes.count))") { thoughts }
@@ -292,23 +314,24 @@ struct ToolView: View {
             await load()
             await store.loadTalk(slug)
             if (store.talk[slug] ?? []).isEmpty, let explanation, !explanation.isEmpty {
-                store.greet(slug, explanation + " Tap the link at the top to try it in Safari, then come back and tell me what to change.")
+                store.greet(slug, explanation)
             }
         }
+        .sheet(item: $showing) { url in SafariSheet(url: url).ignoresSafeArea() }
     }
 
     /// The tool lives on the web. This card is how you get there and back:
     /// open it in Safari, play with it, come back and talk.
     private func safariCard(_ tool: ToolItem) -> some View {
         Button {
-            if let url = store.openURL(slug, draft: tool.has_draft) { store.host?.openInSafari(url) }
+            showing = store.openURL(slug, draft: tool.has_draft)
         } label: {
             HStack(spacing: 14) {
                 Image(systemName: "safari").font(.system(size: 28, weight: .semibold))
                 VStack(alignment: .leading, spacing: 2) {
-                    Text(tool.has_draft ? "Try your draft in Safari" : "Open it in Safari")
+                    Text(tool.has_draft ? "Try your draft" : "Open it")
                         .font(Amber.font(20, .heavy))
-                    Text(tool.has_draft ? "Only this chat sees it until someone keeps it." : "Play with it, then come back and tell me.")
+                    Text(tool.has_draft ? "Only you see this until you publish it." : "Live for everyone in the chat")
                         .font(Amber.font(15)).multilineTextAlignment(.leading)
                 }
                 Spacer(minLength: 0)
@@ -330,7 +353,7 @@ struct ToolView: View {
     private var dock: some View {
         VStack(alignment: .leading, spacing: 10) {
             HoldToTalk(label: "Hold to talk to Amber", onPress: { speaker.stop() }) { heard in
-                Task { await store.say(slug, heard, open: { store.host?.openInSafari($0) }); await load() }
+                Task { await store.say(slug, heard, open: { showing = $0 }); await load() }
             }
             HStack(alignment: .bottom, spacing: 10) {
                 TextField("Or type it", text: $request, axis: .vertical)
@@ -340,7 +363,7 @@ struct ToolView: View {
                     focused = false
                     let text = request
                     request = ""
-                    Task { await store.say(slug, text, open: { store.host?.openInSafari($0) }); await load() }
+                    Task { await store.say(slug, text, open: { showing = $0 }); await load() }
                 }
                 .buttonStyle(BlockButton())
                 .disabled(request.trimmingCharacters(in: .whitespaces).isEmpty)
@@ -377,9 +400,9 @@ struct ToolView: View {
                 }
             }
             if tool.has_draft, store.changing[slug] == nil {
-                Bubble(text: "Want to keep it?", mine: false) {
+                Bubble(text: "Publish it so the chat gets it, or put it back.", mine: false) {
                     HStack(spacing: 10) {
-                        Button("Keep this") { Task { await store.keep(slug); await load() } }
+                        Button("Publish changes") { Task { await store.keep(slug); await load() } }
                             .buttonStyle(BlockButton(primary: true, full: true))
                         Button("Put it back") { Task { await store.discard(slug); await load() } }
                             .buttonStyle(BlockButton(full: true))

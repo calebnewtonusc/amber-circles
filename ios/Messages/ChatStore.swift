@@ -41,6 +41,10 @@ final class ChatStore: ObservableObject {
     /// conversation stays open while they run (pipecat's async tools,
     /// processors/aggregators/async_tool_messages.py).
     @Published var changing: [String: Date] = [:]
+    /// Tools built but not yet shared. Nothing goes into the message box
+    /// until the person taps Publish (Caleb, 2026-09-27: "the text already
+    /// tries to send without me clicking publish").
+    @Published var unpublished: Set<String> = []
 
     /// Amber opens a tool by saying what it is, out loud, once.
     func greet(_ slug: String, _ text: String) { reply(slug, text) }
@@ -143,7 +147,7 @@ final class ChatStore: ObservableObject {
             await refresh()
             building = nil
             route = .tool(result.slug)
-            if let made = tool(result.slug) { send(made, note: "I made this for us. Tap to open it.") }
+            unpublished.insert(result.slug)
         } catch {
             building = nil
             self.error = error.localizedDescription
@@ -273,8 +277,8 @@ final class ChatStore: ObservableObject {
             let result = try await API.build(request: request, chat: session.chat, slug: nil, token: session.token) { _, _ in }
             await refresh()
             let title = tool(result.slug)?.title ?? "it"
-            reply(key, "\(title) is ready. I put it in the message box so you can send it to the chat.")
-            if let made = tool(result.slug) { send(made, note: "I made this for us. Tap to open it.") }
+            reply(key, "\(title) is ready. Try it, then tap Publish when you want the chat to have it.")
+            unpublished.insert(result.slug)
         } catch {
             reply(key, "That didn't get built. \(error.localizedDescription)")
         }
@@ -291,7 +295,7 @@ final class ChatStore: ObservableObject {
             await refresh()
             struct Summary: Decodable { let text: String }
             let summary: Summary? = try? await API.call("api/tools/\(slug)/draft-summary", chat: session.token)
-            reply(key ?? slug, "It's updated. " + (summary?.text ?? "") + " Tap the link at the top to try it in Safari.")
+            reply(key ?? slug, "It's updated. " + (summary?.text ?? ""))
         } catch {
             reply(key ?? slug, "That change didn't go through. \(error.localizedDescription)")
         }
@@ -304,6 +308,7 @@ final class ChatStore: ObservableObject {
             let _: Kept = try await API.call("api/tools/\(slug)/keep", method: "POST", chat: session.token)
             await refresh()
             if let kept = tool(slug) { send(kept, note: "I changed this. Tap to see it.") }
+            unpublished.remove(slug)
         } catch { self.error = error.localizedDescription }
     }
 
@@ -338,6 +343,13 @@ final class ChatStore: ObservableObject {
 
     /// Puts a bubble in the message field. The person still taps send, which
     /// is how iMessage apps are meant to behave and why nothing goes out alone.
+    /// Shares a new tool with the chat, only when the person taps Publish.
+    func publish(_ slug: String) {
+        guard let made = tool(slug) else { return }
+        send(made, note: "I made this for us. Tap to open it.")
+        unpublished.remove(slug)
+    }
+
     func send(_ tool: ToolItem, note: String) {
         guard let conversation = host?.activeConversation, let url = link(for: tool.slug) else { return }
         let layout = MSMessageTemplateLayout()
