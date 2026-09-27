@@ -205,6 +205,8 @@ async function render() {
   const path = location.pathname;
   const toolMatch = path.match(/^\/t\/([\w-]+)\/?$/);
   if (toolMatch) return runner(toolMatch[1]);
+  const chatMatch = path.match(/^\/c\/([\w-]+)\/?$/);
+  if (chatMatch) return chatPage(chatMatch[1]);
   if (!store.get(OWNER_KEY)) return landing();
   if (path === "/circles") return circlesPage();
   const circleMatch = path.match(/^\/circles\/([\w-]+)$/);
@@ -1020,6 +1022,80 @@ function bindAsk(slug, data) {
     } catch (error) {
       app.querySelector("#ask-error").textContent = error.message;
       button.disabled = false;
+    }
+  });
+}
+
+// ---------- a group chat's things, on the web ----------
+
+// Where an iMessage bubble lands when it is opened in a browser: on a Mac, on
+// a phone without the app, or forwarded. Everything a chat makes lives on the
+// web; the iMessage app is only where the chat edits it.
+function chatPage(chatId) {
+  const fragment = new URLSearchParams(location.hash.slice(1));
+  const invite = fragment.get("i");
+  const slug = fragment.get("t");
+  const key = `amber.chat.${chatId}`;
+  if (invite) store.set(`${key}.invite`, invite);
+  history.replaceState({}, "", `/c/${chatId}`);
+  let participant = store.get("amber.participant");
+  if (!participant) {
+    participant = `web-${crypto.randomUUID()}`;
+    store.set("amber.participant", participant);
+  }
+  const token = store.get(key);
+  const frame = (content) => {
+    app.innerHTML = `<div class="page"><header class="nav"><a class="brand" href="/" data-link><span class="brand-mark" aria-hidden="true"></span><span class="brand-name">Amber</span></a></header><main id="main">${content}</main></div>`;
+  };
+  const show = async (memberToken) => {
+    if (slug) {
+      location.replace(`/t/${slug}#m=${encodeURIComponent(memberToken)}`);
+      return;
+    }
+    frame('<div class="skeleton h-320"></div>');
+    try {
+      const response = await fetch(`/api/chats/${chatId}`, { headers: { "x-amber-chat": memberToken } });
+      const data = await response.json();
+      if (!response.ok) throw new Error(data.error || "That did not load.");
+      frame(`<div class="masthead"><h1>Made in this chat</h1></div>
+        <div class="shelf">${data.tools.length ? data.tools.map((tool) => `
+          <article class="tile"><div class="tile-body">
+            <a class="tile-title" href="/t/${esc(tool.slug)}#m=${encodeURIComponent(memberToken)}">${esc(tool.title)}</a>
+            <span class="tile-circle">${tool.made_by ? `By ${esc(tool.made_by)}` : ""}</span>
+            <span class="tile-meta">${tool.entries} ${tool.entries === 1 ? "entry" : "entries"}, changed ${timeAgo(tool.updated_at)}</span>
+          </div></article>`).join("") : '<p class="lede">Nothing yet. Make something from the Amber app in Messages.</p>'}</div>
+        <p class="fine mt-4">In this chat: ${esc(data.people.map((person) => person.name).join(", "))}</p>`);
+    } catch (error) {
+      frame(errorView(error));
+      bindRetry();
+    }
+  };
+  if (token) return show(token);
+  const savedInvite = store.get(`${key}.invite`);
+  if (!savedInvite) {
+    frame(stateView({ glyph: "lock", title: "This link is missing its invite", body: "Ask someone in the chat to send it again from the Amber app." }));
+    return;
+  }
+  frame(`<div class="state"><h2>You're invited</h2><p>Someone in your chat made something with Amber. Say your name once, and you can open everything the chat makes.</p>
+    <form id="join" class="stack"><div class="field"><label for="join-name">Your first name</label><input class="input" id="join-name" name="name" required maxlength="80" autocomplete="given-name"></div>
+    <p class="error-text" id="join-error" role="alert"></p><button class="btn btn-primary btn-lg" type="submit">Open it ${icon("arrow")}</button></form></div>`);
+  app.querySelector("#join").addEventListener("submit", async (event) => {
+    event.preventDefault();
+    const form = event.currentTarget;
+    form.querySelector("button").disabled = true;
+    try {
+      const response = await fetch(`/api/chats/${chatId}/join`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ invite: savedInvite, name: form.name.value, participant }),
+      });
+      const data = await response.json();
+      if (!response.ok) throw new Error(data.error || "That did not work. Try again.");
+      store.set(key, data.token);
+      show(data.token);
+    } catch (error) {
+      app.querySelector("#join-error").textContent = error.message;
+      form.querySelector("button").disabled = false;
     }
   });
 }

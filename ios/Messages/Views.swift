@@ -222,6 +222,7 @@ struct ToolView: View {
     @State private var request = ""
     @State private var note = ""
     @State private var showing: URL?
+    @State private var copied = false
     @FocusState private var focused: Bool
     @FocusState private var noteFocused: Bool
 
@@ -250,6 +251,7 @@ struct ToolView: View {
                         Button("Send to chat") { store.send(tool, note: "Tap to open it together.") }
                             .buttonStyle(BlockButton(full: true))
                     }
+                    liveLink
                     section("Talk to it") { conversation(tool) }
                     section("Thoughts from the chat") { thoughts }
                 } else {
@@ -260,6 +262,29 @@ struct ToolView: View {
         }
         .task(id: slug) { await load() }
         .sheet(item: $showing) { url in SafariSheet(url: url).ignoresSafeArea() }
+    }
+
+    /// The tool lives on the web; this app only edits it. The link works for
+    /// anyone in the chat, in any browser, with or without Amber installed.
+    private var liveLink: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack(spacing: 8) {
+                Circle().fill(Amber.present).frame(width: 10, height: 10)
+                Text("Live on the web").font(Amber.font(17, .bold)).foregroundStyle(Amber.ink)
+            }
+            HStack(spacing: 10) {
+                Text(store.link(for: slug)?.host() ?? "")
+                    .font(Amber.font(16)).foregroundStyle(Amber.body)
+                    .lineLimit(1).truncationMode(.middle)
+                Spacer()
+                Button(copied ? "Copied" : "Copy link") {
+                    UIPasteboard.general.url = store.link(for: slug)
+                    copied = true
+                }
+                .font(Amber.font(17, .bold)).foregroundStyle(Amber.ink).underline()
+            }
+        }
+        .padding(14).block()
     }
 
     @ViewBuilder
