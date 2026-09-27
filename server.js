@@ -954,15 +954,23 @@ app.post("/api/run/:slug/copy", async (c) => {
 // about a dollar an hour. Twelve builds an hour is far past what a person
 // iterating by hand does.
 const BUILDS_PER_HOUR = 12;
+// The per-owner limit does not stop fifty new accounts, and this URL goes on
+// a public Devpost page. A new tool measured about 19 cents at Opus 5 list
+// price (2026-09-27, two builds), so 150 a day caps the worst day near $30.
+const BUILDS_PER_DAY = Number(process.env.AMBER_BUILDS_PER_DAY || 150);
 const buildLog = new Map();
+let siteBuilds = [];
 function allowBuild(ownerId) {
   const now = Date.now();
+  siteBuilds = siteBuilds.filter((at) => now - at < 86_400_000);
+  if (siteBuilds.length >= BUILDS_PER_DAY) return "site";
   const recent = (buildLog.get(ownerId) || []).filter(
     (at) => now - at < 3600_000,
   );
   if (recent.length >= BUILDS_PER_HOUR) return false;
   recent.push(now);
   buildLog.set(ownerId, recent);
+  siteBuilds.push(now);
   return true;
 }
 
@@ -991,7 +999,10 @@ app.post("/api/build", async (c) => {
     "select name from members where circle_id = $1 order by is_owner desc, name",
     [circle.id],
   );
-  if (!allowBuild(owner.id))
+  const allowed = allowBuild(owner.id);
+  if (allowed === "site")
+    throw new HttpError(503, "Amber has built a lot of tools today and is resting. Try again tomorrow.");
+  if (!allowed)
     throw new HttpError(
       429,
       "That is a lot of building for one hour. Take a break and try again in a little while.",
