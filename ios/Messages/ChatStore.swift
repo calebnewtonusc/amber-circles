@@ -173,8 +173,8 @@ final class ChatStore: ObservableObject {
         struct Rows: Decodable { let turns: [Row] }
         guard let rows: Rows = try? await API.call("api/tools/\(slug)/talk", chat: session.token) else { return }
         talk[slug] = rows.turns.map { row in
-            Turn(text: row.role == "amber" || row.name == nil || row.name == session.name ? row.text : "\(row.name!): \(row.text)",
-                 mine: row.role != "amber")
+            Turn(text: row.role != "person" || row.name == nil || row.name == session.name ? row.text : "\(row.name!): \(row.text)",
+                 mine: row.role == "person")
         }
     }
 

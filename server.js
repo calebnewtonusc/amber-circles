@@ -1129,11 +1129,16 @@ app.post("/api/tools/:slug/keep", async (c) => {
     "update tools set draft_html = null, draft_request = null where owner_id = $1 and slug = $2",
     [owner.id, c.req.param("slug")],
   );
+  await logEvent(owner, c.req.param("slug"), `Kept: ${rows[0].draft_request || "a change"}`);
   return c.json(result);
 });
 
 app.post("/api/tools/:slug/discard", async (c) => {
   const owner = await requireOwner(c);
+  const {
+    rows: [waiting],
+  } = await pool.query("select draft_request from tools where owner_id = $1 and slug = $2", [owner.id, c.req.param("slug")]);
+  if (waiting?.draft_request) await logEvent(owner, c.req.param("slug"), `Declined: ${waiting.draft_request}`);
   await pool.query(
     "update tools set draft_html = null, draft_request = null where owner_id = $1 and slug = $2",
     [owner.id, c.req.param("slug")],
@@ -1391,6 +1396,20 @@ app.delete("/api/chats/:id", async (c) => {
   return c.json({ ok: true });
 });
 
+// Amber's memory keeps modality as a column, because getting it wrong gives
+// a wrong answer, not a vague one ("thinking about moving" must never come
+// back as "moved"; chewbacca bin/people, ported from Amber's identity
+// service). Here that is the difference between a wish, a kept change and one
+// that was tried and put back, so those land in the conversation as events.
+async function logEvent(owner, slug, text) {
+  const { rows } = await pool.query("select id from tools where owner_id = $1 and slug = $2", [owner.id, slug]);
+  if (!rows[0]) return;
+  await pool.query(
+    "insert into tool_talk (id, tool_id, member_id, role, text) values ($1, $2, $3, 'event', $4)",
+    [newId("turn"), rows[0].id, owner.chatMember?.id || null, text.slice(0, 1000)],
+  );
+}
+
 async function ownedTool(owner, slug) {
   const { rows } = await pool.query(
     "select id, title, html, version, explain_text, explain_version from tools where owner_id = $1 and slug = $2",
@@ -1445,7 +1464,11 @@ app.post("/api/tools/:slug/talk", async (c) => {
     html: tool.html,
     text,
     notes: notes.map((n) => n.text),
-    memory: memory.map((turn) => `${turn.role === "amber" ? "Amber" : turn.name || "Someone"}: ${turn.text}`),
+    memory: memory.map((turn) =>
+      turn.role === "event"
+        ? `[${turn.text}${turn.name ? `, by ${turn.name}` : ""}]`
+        : `${turn.role === "amber" ? "Amber" : turn.name || "Someone"}: ${turn.text}`,
+    ),
     speaker: owner.chatMember?.name,
   });
   await pool.query(
