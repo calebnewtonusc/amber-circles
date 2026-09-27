@@ -125,3 +125,30 @@ create table if not exists presence (
   last_seen  timestamptz not null default now(),
   primary key (tool_id, member_id)
 );
+
+-- A group chat is a circle. The iMessage app creates one the first time
+-- someone builds in a thread, and everyone who taps the bubble joins it with
+-- the invite the bubble carries. In a chat there is no single owner: anyone
+-- in the thread can make and change things, the way anyone with edit access
+-- can in a shared Drive folder.
+alter table circles add column if not exists chat_invite_hash text;
+-- The iMessage participant id for this person in this thread, so tapping the
+-- bubble twice finds the same member instead of making a second one.
+alter table members add column if not exists participant text;
+create unique index if not exists members_participant_idx
+  on members(circle_id, participant) where participant is not null;
+alter table tools add column if not exists made_by text;
+alter table tools add column if not exists explain_text text;
+alter table tools add column if not exists explain_version int;
+
+-- Thoughts people leave on a tool, like comments on a Doc: nobody gets a text
+-- for each one, they wait inside the tool until someone turns them into a
+-- change.
+create table if not exists tool_notes (
+  id          text primary key,
+  tool_id     text not null references tools(id) on delete cascade,
+  member_id   text references members(id) on delete set null,
+  text        text not null,
+  created_at  timestamptz not null default now()
+);
+create index if not exists tool_notes_tool_idx on tool_notes(tool_id, created_at);

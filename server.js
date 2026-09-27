@@ -14,7 +14,7 @@ import { serve } from "@hono/node-server";
 import { serveStatic } from "@hono/node-server/serve-static";
 import pg from "pg";
 import { streamSSE } from "hono/streaming";
-import { build, titleFrom } from "./builder.js";
+import { build, explain, titleFrom } from "./builder.js";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const PORT = Number(process.env.PORT || 8787);
@@ -140,7 +140,34 @@ async function ownerFromKey(key) {
   return rows[0] || null;
 }
 
+// Someone in a group chat acts for the chat. Their member token resolves to
+// the chat's owner row, which owns that one circle and nothing else, so every
+// owner route below is scoped to the thread they are in.
+async function chatMemberFromToken(token) {
+  if (!token) return null;
+  const { rows } = await pool.query(
+    `select m.id as member_id, m.name as member_name, m.is_owner, c.id as circle_id, o.id, o.name
+       from members m join circles c on c.id = m.circle_id join owners o on o.id = c.owner_id
+      where m.token_hash = $1 and c.chat_invite_hash is not null`,
+    [hash(token)],
+  );
+  const row = rows[0];
+  if (!row) return null;
+  return {
+    id: row.id,
+    name: row.name,
+    chatMember: {
+      id: row.member_id,
+      name: row.member_name,
+      circleId: row.circle_id,
+      startedIt: row.is_owner,
+    },
+  };
+}
+
 async function requireOwner(c) {
+  const chat = await chatMemberFromToken(c.req.header("x-amber-chat"));
+  if (chat) return chat;
   const header = c.req.header("authorization") || "";
   const owner = await ownerFromKey(header.replace(/^Bearer\s+/i, ""));
   if (!owner)
@@ -732,6 +759,8 @@ app.post("/api/circles/:id/members", async (c) => {
 
 app.delete("/api/members/:id", async (c) => {
   const owner = await requireOwner(c);
+  if (owner.chatMember)
+    throw new HttpError(403, "People leave a chat's tools by leaving the chat.");
   await pool.query(
     `delete from members m using circles c
       where m.id = $1 and m.circle_id = c.id and c.owner_id = $2 and not m.is_owner`,
@@ -931,6 +960,8 @@ app.post("/mcp/:key", async (c) => {
 // entry it owns, through the schema's cascades. Nothing is kept.
 app.delete("/api/owner", async (c) => {
   const owner = await requireOwner(c);
+  if (owner.chatMember)
+    throw new HttpError(403, "A group chat cannot be deleted from inside it.");
   await pool.query("delete from owners where id = $1", [owner.id]);
   return c.json({ ok: true });
 });
@@ -1060,6 +1091,11 @@ app.post("/api/build", async (c) => {
           html,
           request,
         });
+        if (owner.chatMember)
+          await pool.query("update tools set made_by = $2 where slug = $1", [
+            result.slug,
+            owner.chatMember.name,
+          ]);
         await send("done", { slug: result.slug, version: 1 });
       }
     } catch (error) {
@@ -1258,6 +1294,145 @@ app.post("/api/requests/:id/:decision", async (c) => {
   } finally {
     client.release();
   }
+});
+
+// ---------- group chats: the iMessage app ----------
+
+app.post("/api/chats", async (c) => {
+  const body = await c.req.json().catch(() => ({}));
+  const name = requireText(body.name, "name", 80);
+  const participant = requireText(body.participant, "participant", 120);
+  const invite = newToken();
+  const ownerId = newId("own");
+  // The chat's owner row has no usable key: nobody signs in as a chat, they
+  // act for it through their own member token.
+  await pool.query(
+    "insert into owners (id, name, key_hash) values ($1, $2, $3)",
+    [ownerId, name, hash(`chat_${newToken()}`)],
+  );
+  const circleId = await createCircle({ id: ownerId, name }, body.chatName || "Our chat");
+  await pool.query("update circles set chat_invite_hash = $2 where id = $1", [
+    circleId,
+    hash(invite),
+  ]);
+  const {
+    rows: [me],
+  } = await pool.query(
+    "update members set participant = $2 where circle_id = $1 and is_owner returning id, token_sealed",
+    [circleId, participant],
+  );
+  return c.json({
+    chat: circleId,
+    invite,
+    token: unseal(me.token_sealed),
+    member: { id: me.id, name },
+  });
+});
+
+app.post("/api/chats/:id/join", async (c) => {
+  const body = await c.req.json().catch(() => ({}));
+  const { rows } = await pool.query(
+    "select id, chat_invite_hash from circles where id = $1",
+    [c.req.param("id")],
+  );
+  const circle = rows[0];
+  if (!circle?.chat_invite_hash || circle.chat_invite_hash !== hash(String(body.invite || "")))
+    throw new HttpError(404, "This link is not for a chat Amber knows. Ask for a new one.");
+  const participant = requireText(body.participant, "participant", 120);
+  const existing = await pool.query(
+    "select id, name, token_sealed from members where circle_id = $1 and participant = $2",
+    [circle.id, participant],
+  );
+  if (existing.rows[0]) {
+    const found = existing.rows[0];
+    return c.json({ chat: circle.id, token: unseal(found.token_sealed), member: { id: found.id, name: found.name } });
+  }
+  const client = await pool.connect();
+  try {
+    const member = await addMember(client, circle.id, { name: body.name });
+    await client.query("update members set participant = $2 where id = $1", [member.id, participant]);
+    return c.json({ chat: circle.id, token: member.token, member: { id: member.id, name: requireText(body.name, "name", 80) } });
+  } finally {
+    client.release();
+  }
+});
+
+// What the chat has made, for the Drive view. Names only: a chat member never
+// receives anyone else's link.
+app.get("/api/chats/:id", async (c) => {
+  const owner = await requireOwner(c);
+  if (owner.chatMember?.circleId !== c.req.param("id"))
+    throw new HttpError(403, "You are not in this chat.");
+  const circleId = owner.chatMember.circleId;
+  const [{ rows: people }, { rows: tools }] = await Promise.all([
+    pool.query("select id, name from members where circle_id = $1 order by created_at", [circleId]),
+    pool.query(
+      `select t.slug, t.title, t.description, t.version, t.made_by, t.updated_at,
+              (t.draft_html is not null) as has_draft, t.draft_request,
+              (select count(*) from records r where r.tool_id = t.id)::int as entries,
+              (select count(*) from tool_notes n where n.tool_id = t.id)::int as notes
+         from tools t where t.circle_id = $1 order by t.updated_at desc`,
+      [circleId],
+    ),
+  ]);
+  return c.json({ chat: circleId, me: owner.chatMember, people, tools });
+});
+
+// Only the person who started a chat can remove it, with everything in it.
+app.delete("/api/chats/:id", async (c) => {
+  const owner = await requireOwner(c);
+  if (owner.chatMember?.circleId !== c.req.param("id") || !owner.chatMember.startedIt)
+    throw new HttpError(403, "Only the person who started this chat's tools can remove them.");
+  await pool.query("delete from owners where id = $1", [owner.id]);
+  return c.json({ ok: true });
+});
+
+async function ownedTool(owner, slug) {
+  const { rows } = await pool.query(
+    "select id, title, html, version, explain_text, explain_version from tools where owner_id = $1 and slug = $2",
+    [owner.id, slug],
+  );
+  if (!rows[0]) throw new HttpError(404, "That tool is not in this chat.");
+  return rows[0];
+}
+
+app.get("/api/tools/:slug/notes", async (c) => {
+  const owner = await requireOwner(c);
+  const tool = await ownedTool(owner, c.req.param("slug"));
+  const { rows } = await pool.query(
+    `select n.id, n.text, n.created_at, m.name from tool_notes n
+       left join members m on m.id = n.member_id where n.tool_id = $1 order by n.created_at`,
+    [tool.id],
+  );
+  return c.json({ notes: rows });
+});
+
+app.post("/api/tools/:slug/notes", async (c) => {
+  const owner = await requireOwner(c);
+  const tool = await ownedTool(owner, c.req.param("slug"));
+  const body = await c.req.json().catch(() => ({}));
+  const id = newId("note");
+  await pool.query(
+    "insert into tool_notes (id, tool_id, member_id, text) values ($1, $2, $3, $4)",
+    [id, tool.id, owner.chatMember?.id || null, requireText(body.text, "note", 1000)],
+  );
+  return c.json({ id });
+});
+
+// "What is this?", in two or three plain sentences, the first thing someone
+// who did not make it needs (Shirley, 2026-09-27: explain it first, then how
+// to use it). Written once per version, so it costs one small call per change.
+app.get("/api/tools/:slug/explain", async (c) => {
+  const owner = await requireOwner(c);
+  const tool = await ownedTool(owner, c.req.param("slug"));
+  if (tool.explain_text && tool.explain_version === tool.version)
+    return c.json({ text: tool.explain_text });
+  const text = await explain({ title: tool.title, html: tool.html });
+  await pool.query(
+    "update tools set explain_text = $2, explain_version = $3 where id = $1",
+    [tool.id, text, tool.version],
+  );
+  return c.json({ text });
 });
 
 app.get("/mcp/:key", (c) => c.body(null, 405));

@@ -166,3 +166,26 @@ export async function build({
   onProgress?.({ stage: "checking", chars: text.length });
   return { html: extractHtml(text), usage: message.usage };
 }
+
+// Two or three sentences a person in their seventies can read before they
+// ever open the tool: what it is for, and the first thing to tap. Haiku,
+// because this is a summary of a file already written, not a build.
+export async function explain({ title, html }) {
+  const message = await anthropic().messages.create({
+    model: "claude-haiku-4-5",
+    max_tokens: 300,
+    system:
+      "You explain a small tool to someone who did not make it and may be in their seventies. Write two or three short sentences in plain words: what it is for, then the first thing to tap. No jargon, no code words, no emojis, no em dashes. Reply with the sentences only.",
+    messages: [
+      {
+        role: "user",
+        content: `The tool is called "${title}". Here is its file:\n\n${String(html).slice(0, 60000)}`,
+      },
+    ],
+  });
+  return message.content
+    .filter((block) => block.type === "text")
+    .map((block) => block.text)
+    .join("")
+    .trim();
+}
