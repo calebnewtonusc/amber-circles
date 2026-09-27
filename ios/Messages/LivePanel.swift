@@ -110,6 +110,16 @@ struct WebFrame: UIViewRepresentable {
     var html: String? = nil
 
     final class Coordinator { var lastLength = 0; var loadedURL: URL? }
+
+    /// A stand-in for Amber's data bridge (public/bridge.js), so a page that
+    /// is still being written can draw its empty state instead of sitting on
+    /// "Loading..." forever. It saves nothing; the real bridge takes over when
+    /// the finished app opens.
+    static let previewBridge = """
+    <script>window.amber={me:async()=>({id:"preview",name:"You",isOwner:true}),circle:async()=>({name:"Preview"}),\
+    people:async()=>[],list:async()=>[],add:async(c,d)=>({id:"p",data:d}),update:async()=>({}),remove:async()=>({}),\
+    reachOut:async()=>({}),onChange:()=>{}};</script>
+    """
     func makeCoordinator() -> Coordinator { Coordinator() }
 
     func makeUIView(context: Context) -> WKWebView {
@@ -124,7 +134,7 @@ struct WebFrame: UIViewRepresentable {
         if let html {
             guard html.count - context.coordinator.lastLength > 600 || context.coordinator.lastLength == 0 else { return }
             context.coordinator.lastLength = html.count
-            view.loadHTMLString(html, baseURL: API.base)
+            view.loadHTMLString(Self.previewBridge + html, baseURL: API.base)
         } else if let url, url != context.coordinator.loadedURL {
             context.coordinator.loadedURL = url
             view.load(URLRequest(url: url))

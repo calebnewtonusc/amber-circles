@@ -124,11 +124,6 @@ struct HomeView: View {
                             Bubble(text: turn.text, mine: turn.mine)
                                 .transition(.move(edge: .bottom).combined(with: .opacity))
                         }
-                        if let started = store.changing["__new"] {
-                            TimelineView(.periodic(from: .now, by: 1)) { context in
-                                Bubble(text: "Building it. \(Int(context.date.timeIntervalSince(started))) seconds so far. You can keep talking to me.", mine: false)
-                            }
-                        }
                         if let people = store.overview?.people, !people.isEmpty {
                             Text("In this chat: " + people.map(\.name).joined(separator: ", "))
                                 .font(Amber.font(15)).foregroundStyle(Amber.muted)
