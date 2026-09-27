@@ -11,6 +11,7 @@ settings:
     SWIFT_VERSION: "5.0"
     MARKETING_VERSION: "2.0"
     CURRENT_PROJECT_VERSION: "35"
+    TARGETED_DEVICE_FAMILY: "1"
 targets:
   Amber:
     type: application
@@ -48,6 +49,8 @@ targets:
           - AtkinsonHyperlegibleNext-Regular.ttf
           - AtkinsonHyperlegibleNext-Bold.ttf
           - AtkinsonHyperlegibleNext-ExtraBold.ttf
+        NSMicrophoneUsageDescription: Amber listens while you hold the talk button, so you can say what to change instead of typing it.
+        NSSpeechRecognitionUsageDescription: Amber turns what you say into words on your phone, so you can talk to what your chat made.
         NSExtension:
           NSExtensionPointIdentifier: com.apple.message-payload-provider
           NSExtensionPrincipalClass: $(PRODUCT_MODULE_NAME).MessagesViewController

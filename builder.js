@@ -189,3 +189,49 @@ export async function explain({ title, html }) {
     .join("")
     .trim();
 }
+
+// One box, two jobs, the way you talk to a person: "how does it know who
+// added what?" gets an answer, "make the names bigger" gets a change.
+// Caleb, 2026-09-27: "you ask some questions and you're like, oh, how does it
+// do that?" Haiku reads the tool and decides.
+export async function talk({ title, html, text, notes = [] }) {
+  const message = await anthropic().messages.create({
+    model: "claude-haiku-4-5",
+    max_tokens: 400,
+    system:
+      'You are Amber, talking with someone about a small tool their group chat uses. They may be in their seventies. Decide if what they said asks you to CHANGE the tool, or is a QUESTION or comment. Reply with JSON only: {"kind":"change","request":"<their change, restated as one clear instruction>","reply":"<one short friendly sentence saying you are on it>"} or {"kind":"answer","reply":"<two or three plain sentences answering them from the file>"}. No jargon, no code words, no emojis, no em dashes.',
+    messages: [
+      {
+        role: "user",
+        content: `Tool: "${title}"\n${notes.length ? `Thoughts people left: ${notes.join(" | ")}\n` : ""}File:\n${String(html).slice(0, 50000)}\n\nThey said: "${text}"`,
+      },
+    ],
+  });
+  const raw = message.content.filter((b) => b.type === "text").map((b) => b.text).join("");
+  try {
+    const parsed = JSON.parse(raw.slice(raw.indexOf("{"), raw.lastIndexOf("}") + 1));
+    if (parsed.kind === "change" && parsed.request) return parsed;
+    if (parsed.reply) return { kind: "answer", reply: parsed.reply };
+  } catch {
+    /* fall through: treat it as a change, which is the safe, reversible reading */
+  }
+  return { kind: "change", request: text, reply: "On it." };
+}
+
+// After a change is written, say what is different, the way a person would
+// before asking you to look: "Here is what changed. Try it and tell me."
+export async function describeChange({ before, after, request }) {
+  const message = await anthropic().messages.create({
+    model: "claude-haiku-4-5",
+    max_tokens: 250,
+    system:
+      "Compare two versions of a small tool and tell someone who is not technical what changed, in two or three short sentences, ending by asking them to try it. Plain words, no code words, no emojis, no em dashes.",
+    messages: [
+      {
+        role: "user",
+        content: `They asked: "${request}"\n\nBEFORE:\n${String(before).slice(0, 30000)}\n\nAFTER:\n${String(after).slice(0, 30000)}`,
+      },
+    ],
+  });
+  return message.content.filter((b) => b.type === "text").map((b) => b.text).join("").trim();
+}

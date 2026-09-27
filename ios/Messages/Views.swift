@@ -111,10 +111,12 @@ struct HomeView: View {
                 VStack(alignment: .leading, spacing: 10) {
                     Text(store.session == nil ? "What should we make?" : "Make something new")
                         .font(Amber.font(20, .bold)).foregroundStyle(Amber.ink)
+                    HoldToTalk(label: "Hold and say what to make") { heard in
+                        Task { await store.make(heard) }
+                    }
+                    Text("Or type it").font(Amber.font(16, .bold)).foregroundStyle(Amber.muted)
                     Composer(placeholder: "A sign-up sheet for Sunday dinner", text: $request, focused: $focused)
                         .onChange(of: focused) { _, isOn in if isOn { store.host?.expand() } }
-                    Text("Tap the mic on your keyboard to say it instead.")
-                        .font(Amber.font(16)).foregroundStyle(Amber.muted)
                     if request.isEmpty {
                         ForEach(ideas, id: \.self) { idea in
                             Button { request = idea } label: {
@@ -295,23 +297,25 @@ struct ToolView: View {
         }
     }
 
-    /// Every change is a turn in a conversation: what someone asked, and what
-    /// Amber did. A waiting change is the last turn, with its three buttons.
+    /// The history (every kept version), then this conversation, then any
+    /// waiting change with its three buttons, then the ways to talk.
     @ViewBuilder
     private func conversation(_ tool: ToolItem) -> some View {
         VStack(alignment: .leading, spacing: 10) {
             ForEach(versions.reversed()) { version in
                 Bubble(text: version.request?.isEmpty == false ? version.request! : "Made it", mine: true)
-                Bubble(text: version.current ? "Done. This is what everyone sees now." : "Done. Version \(version.version).", mine: false) {
+                Bubble(text: version.current ? "Done. This is what everyone sees now." : "Done. That was version \(version.version).", mine: false) {
                     if !version.current {
                         Button("Go back to this") { Task { await restore(version.version) } }
                             .font(Amber.font(16, .bold)).foregroundStyle(Amber.ink).underline()
                     }
                 }
             }
+            ForEach(store.talk[slug] ?? []) { turn in
+                Bubble(text: turn.text, mine: turn.mine)
+            }
             if tool.has_draft {
-                Bubble(text: tool.draft_request ?? "A change", mine: true)
-                Bubble(text: "Here is that change. Only this chat's makers see it until someone keeps it.", mine: false) {
+                Bubble(text: "Your change is ready. Only people in this chat can try it until someone keeps it.", mine: false) {
                     VStack(alignment: .leading, spacing: 10) {
                         Button("Try it first") { showing = store.openURL(slug, draft: true) }
                             .buttonStyle(BlockButton(full: true))
@@ -323,19 +327,25 @@ struct ToolView: View {
                         }
                     }
                 }
-            } else {
-                Composer(placeholder: "Make the writing bigger. Add a place for the date.", text: $request, focused: $focused)
-                Button("Make the change") {
+            }
+            HoldToTalk(label: tool.has_draft ? "Hold to ask about it" : "Hold to talk to it") { heard in
+                Task { await store.say(slug, heard); await load() }
+            }
+            HStack(alignment: .bottom, spacing: 10) {
+                TextField("Or type: make the names bigger", text: $request, axis: .vertical)
+                    .font(Amber.font(18)).lineLimit(1...4).focused($focused)
+                    .padding(12).frame(minHeight: 52).block()
+                Button("Send") {
                     focused = false
                     let text = request
                     request = ""
-                    Task { await store.change(slug, text); await load() }
+                    Task { await store.say(slug, text); await load() }
                 }
-                .buttonStyle(BlockButton(primary: true, full: true))
+                .buttonStyle(BlockButton())
                 .disabled(request.trimmingCharacters(in: .whitespaces).isEmpty)
-                Text("You'll try it first. Nothing changes for anyone until someone keeps it.")
-                    .font(Amber.font(16)).foregroundStyle(Amber.muted)
             }
+            Text("Ask it anything, or tell it what to change. Nothing changes for anyone until someone keeps it.")
+                .font(Amber.font(16)).foregroundStyle(Amber.muted)
         }
     }
 
@@ -345,12 +355,19 @@ struct ToolView: View {
                 Text("Nothing yet. Leave a thought and anyone can turn it into a change later.")
                     .font(Amber.font(17)).foregroundStyle(Amber.muted)
             }
+            if notes.count > 1, store.tool(slug)?.has_draft == false {
+                Button("Turn these into one change") {
+                    let all = notes.map(\.text).joined(separator: "; ")
+                    Task { await store.say(slug, "Make these changes the chat asked for: \(all)"); await load() }
+                }
+                .buttonStyle(BlockButton(full: true))
+            }
             ForEach(notes) { item in
                 VStack(alignment: .leading, spacing: 6) {
                     Text(item.name ?? "Someone").font(Amber.font(15, .bold)).foregroundStyle(Amber.muted)
                     Text(item.text).font(Amber.font(18)).foregroundStyle(Amber.ink)
                     if store.tool(slug)?.has_draft == false {
-                        Button("Make this change") { Task { await store.change(slug, item.text); await load() } }
+                        Button("Make this change") { Task { await store.say(slug, item.text); await load() } }
                             .font(Amber.font(16, .bold)).foregroundStyle(Amber.ink).underline()
                     }
                 }

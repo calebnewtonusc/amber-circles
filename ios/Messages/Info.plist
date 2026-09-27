@@ -25,6 +25,10 @@
 		<key>NSExtensionPrincipalClass</key>
 		<string>$(PRODUCT_MODULE_NAME).MessagesViewController</string>
 	</dict>
+	<key>NSMicrophoneUsageDescription</key>
+	<string>Amber listens while you hold the talk button, so you can say what to change instead of typing it.</string>
+	<key>NSSpeechRecognitionUsageDescription</key>
+	<string>Amber turns what you say into words on your phone, so you can talk to what your chat made.</string>
 	<key>UIAppFonts</key>
 	<array>
 		<string>AtkinsonHyperlegibleNext-Regular.ttf</string>

@@ -6,6 +6,14 @@ enum Route: Hashable {
     case tool(String)
 }
 
+/// One line of the conversation with a tool: what someone said, or what
+/// Amber said back.
+struct Turn: Identifiable, Equatable {
+    let id = UUID()
+    let text: String
+    let mine: Bool
+}
+
 struct BuildState: Equatable {
     var request: String
     var stage: String = "thinking"
@@ -25,6 +33,9 @@ final class ChatStore: ObservableObject {
     @Published var route: Route = .home
     @Published var loading = false
     @Published var expanded = false
+    /// The conversation with each tool, kept here so it survives the building
+    /// screen replacing the tool's screen.
+    @Published var talk: [String: [Turn]] = [:]
 
     weak var host: MessagesViewController?
     private var participant = ""
@@ -140,6 +151,30 @@ final class ChatStore: ObservableObject {
             building = nil
         } catch {
             building = nil
+            self.error = error.localizedDescription
+        }
+    }
+
+    /// Say something to a tool. A question is answered; a change is built,
+    /// then described in plain words so the person knows what to look for.
+    func say(_ slug: String, _ text: String) async {
+        let words = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard let session, !words.isEmpty else { return }
+        talk[slug, default: []].append(Turn(text: words, mine: true))
+        do {
+            struct Reply: Decodable { let kind: String; let reply: String; let request: String? }
+            let reply: Reply = try await API.call(
+                "api/tools/\(slug)/talk", method: "POST", body: ["text": words], chat: session.token)
+            talk[slug, default: []].append(Turn(text: reply.reply, mine: false))
+            guard reply.kind == "change" else { return }
+            await change(slug, reply.request ?? words)
+            if tool(slug)?.has_draft == true {
+                struct Summary: Decodable { let text: String }
+                if let summary: Summary = try? await API.call("api/tools/\(slug)/draft-summary", chat: session.token) {
+                    talk[slug, default: []].append(Turn(text: summary.text, mine: false))
+                }
+            }
+        } catch {
             self.error = error.localizedDescription
         }
     }

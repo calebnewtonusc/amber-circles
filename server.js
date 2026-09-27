@@ -14,7 +14,7 @@ import { serve } from "@hono/node-server";
 import { serveStatic } from "@hono/node-server/serve-static";
 import pg from "pg";
 import { streamSSE } from "hono/streaming";
-import { build, explain, titleFrom } from "./builder.js";
+import { build, describeChange, explain, talk, titleFrom } from "./builder.js";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const PORT = Number(process.env.PORT || 8787);
@@ -1421,6 +1421,33 @@ app.post("/api/tools/:slug/notes", async (c) => {
     [id, tool.id, owner.chatMember?.id || null, requireText(body.text, "note", 1000)],
   );
   return c.json({ id });
+});
+
+// The conversation with a tool. A question is answered here, for a fraction
+// of a cent; a change comes back as a restated request for /api/build.
+app.post("/api/tools/:slug/talk", async (c) => {
+  const owner = await requireOwner(c);
+  const tool = await ownedTool(owner, c.req.param("slug"));
+  const body = await c.req.json().catch(() => ({}));
+  const text = requireText(body.text, "what you said", 2000);
+  const { rows: notes } = await pool.query(
+    "select text from tool_notes where tool_id = $1 order by created_at desc limit 10",
+    [tool.id],
+  );
+  return c.json(await talk({ title: tool.title, html: tool.html, text, notes: notes.map((n) => n.text) }));
+});
+
+// What a waiting change does, in plain words, so the person knows what to
+// look for before they try it.
+app.get("/api/tools/:slug/draft-summary", async (c) => {
+  const owner = await requireOwner(c);
+  const { rows } = await pool.query(
+    "select html, draft_html, draft_request from tools where owner_id = $1 and slug = $2",
+    [owner.id, c.req.param("slug")],
+  );
+  if (!rows[0]?.draft_html) throw new HttpError(404, "There is no change waiting.");
+  const text = await describeChange({ before: rows[0].html, after: rows[0].draft_html, request: rows[0].draft_request || "" });
+  return c.json({ text });
 });
 
 // "What is this?", in two or three plain sentences, the first thing someone
