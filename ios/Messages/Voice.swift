@@ -87,6 +87,9 @@ final class Listener: ObservableObject {
 struct HoldToTalk: View {
     @StateObject private var listener = Listener()
     var label = "Hold to talk"
+    /// Pressing talk cuts Amber off at once, before the microphone opens
+    /// (Chewbacca docs/VOICE-DESIGN.md, "Interrupting").
+    var onPress: () -> Void = {}
     let onHeard: (String) -> Void
     @State private var pressing = false
 
@@ -114,6 +117,7 @@ struct HoldToTalk: View {
                     .onChanged { _ in
                         guard !pressing else { return }
                         pressing = true
+                        onPress()
                         listener.start()
                     }
                     .onEnded { _ in

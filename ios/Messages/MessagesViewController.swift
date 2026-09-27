@@ -52,7 +52,7 @@ enum BubbleArt {
             HStack(spacing: 10) {
                 Circle().fill(Amber.amber).overlay(Circle().strokeBorder(Amber.ink, lineWidth: 3))
                     .frame(width: 28, height: 28)
-                Text("Made in this chat").font(Amber.font(24, .bold)).foregroundStyle(Amber.ink)
+                Text("Let's build together").font(Amber.font(24, .bold)).foregroundStyle(Amber.ink)
             }
             Spacer(minLength: 0)
             Text(title).font(Amber.font(58, .heavy)).foregroundStyle(Amber.ink)

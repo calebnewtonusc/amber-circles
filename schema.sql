@@ -152,3 +152,17 @@ create table if not exists tool_notes (
   created_at  timestamptz not null default now()
 );
 create index if not exists tool_notes_tool_idx on tool_notes(tool_id, created_at);
+
+-- The conversation with each tool, kept. Chewbacca's voice is "connected to
+-- the brain both ways" (docs/VOICE-DESIGN.md): every turn is logged and read
+-- back into the next, so Amber knows what Ruth asked for yesterday when Stan
+-- opens it today.
+create table if not exists tool_talk (
+  id          text primary key,
+  tool_id     text not null references tools(id) on delete cascade,
+  member_id   text references members(id) on delete set null,
+  role        text not null,
+  text        text not null,
+  created_at  timestamptz not null default now()
+);
+create index if not exists tool_talk_tool_idx on tool_talk(tool_id, created_at);

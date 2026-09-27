@@ -235,78 +235,102 @@ struct ToolView: View {
     @FocusState private var noteFocused: Bool
 
     var body: some View {
-        ScrollView {
-            VStack(alignment: .leading, spacing: 22) {
-                Button { store.route = .home } label: {
-                    Label("Everything in this chat", systemImage: "chevron.left")
-                        .font(Amber.font(17, .bold)).foregroundStyle(Amber.ink)
-                }
-                if let tool = store.tool(slug) {
-                    VStack(alignment: .leading, spacing: 6) {
-                        Text(tool.title).font(Amber.font(34, .heavy)).foregroundStyle(Amber.ink)
-                        if let by = tool.made_by { Text("Made by \(by)").font(Amber.font(17, .bold)).foregroundStyle(Amber.body) }
-                    }
-                    ErrorLine()
-                    LivePreview(url: store.openURL(slug, draft: tool.has_draft), label: tool.has_draft ? "Your change, not kept yet" : "Live now") {
-                        showing = store.openURL(slug, draft: tool.has_draft)
-                    }
-                    .id("\(tool.version)-\(tool.has_draft)")
-                    section("What it is") {
-                        Text(explanation ?? "Reading it so it can explain itself…")
-                            .font(Amber.font(19)).foregroundStyle(explanation == nil ? Amber.muted : Amber.ink)
-                            .frame(maxWidth: .infinity, alignment: .leading)
-                            .padding(16).block()
-                    }
-                    HStack(spacing: 12) {
-                        Button("Open it") { showing = store.openURL(slug) }
-                            .buttonStyle(BlockButton(primary: true, full: true))
-                        Button("Send to chat") { store.send(tool, note: "Tap to open it together.") }
-                            .buttonStyle(BlockButton(full: true))
-                    }
-                    liveLink
-                    VStack(alignment: .leading, spacing: 12) {
-                        HStack {
-                            Text("Talk to it").font(Amber.font(22, .heavy)).foregroundStyle(Amber.ink)
-                            Spacer()
-                            Toggle(isOn: $speaker.isOn) {
-                                Text("Amber talks back").font(Amber.font(16, .bold)).foregroundStyle(Amber.body)
-                            }
-                            .toggleStyle(.switch).tint(Amber.present).fixedSize()
+        VStack(spacing: 0) {
+            ScrollViewReader { proxy in
+                ScrollView {
+                    VStack(alignment: .leading, spacing: 16) {
+                        Button { store.route = .home } label: {
+                            Label("Everything in this chat", systemImage: "chevron.left")
+                                .font(Amber.font(17, .bold)).foregroundStyle(Amber.ink)
                         }
-                        conversation(tool)
+                        if let tool = store.tool(slug) {
+                            VStack(alignment: .leading, spacing: 4) {
+                                Text(tool.title).font(Amber.font(30, .heavy)).foregroundStyle(Amber.ink)
+                                if let by = tool.made_by { Text("Made by \(by)").font(Amber.font(16, .bold)).foregroundStyle(Amber.body) }
+                            }
+                            safariCard(tool)
+                            ErrorLine()
+                            conversation(tool)
+                            DisclosureGroup("Comments from the chat (\(notes.count))") { thoughts }
+                                .font(Amber.font(17, .bold)).foregroundStyle(Amber.ink).tint(Amber.ink)
+                            Color.clear.frame(height: 1).id("end")
+                        } else {
+                            ProgressView().frame(maxWidth: .infinity, minHeight: 120)
+                        }
                     }
-                    section("Thoughts from the chat") { thoughts }
-                } else {
-                    ProgressView().frame(maxWidth: .infinity, minHeight: 120)
+                    .padding(20)
+                }
+                .onChange(of: store.talk[slug]?.count ?? 0) { _, _ in
+                    withAnimation { proxy.scrollTo("end", anchor: .bottom) }
                 }
             }
-            .padding(20)
+            dock
         }
-        .task(id: slug) { await load() }
-        .sheet(item: $showing) { url in SafariSheet(url: url).ignoresSafeArea() }
+        .task(id: slug) {
+            await load()
+            await store.loadTalk(slug)
+            if (store.talk[slug] ?? []).isEmpty, let explanation, !explanation.isEmpty {
+                store.greet(slug, explanation + " Tap the link at the top to try it in Safari, then come back and tell me what to change.")
+            }
+        }
     }
 
-    /// The tool lives on the web; this app only edits it. The link works for
-    /// anyone in the chat, in any browser, with or without Amber installed.
-    private var liveLink: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            HStack(spacing: 8) {
-                Circle().fill(Amber.present).frame(width: 10, height: 10)
-                Text("Live on the web").font(Amber.font(17, .bold)).foregroundStyle(Amber.ink)
-            }
-            HStack(spacing: 10) {
-                Text(store.link(for: slug)?.host() ?? "")
-                    .font(Amber.font(16)).foregroundStyle(Amber.body)
-                    .lineLimit(1).truncationMode(.middle)
-                Spacer()
-                Button(copied ? "Copied" : "Copy link") {
-                    UIPasteboard.general.url = store.link(for: slug)
-                    copied = true
+    /// The tool lives on the web. This card is how you get there and back:
+    /// open it in Safari, play with it, come back and talk.
+    private func safariCard(_ tool: ToolItem) -> some View {
+        Button {
+            if let url = store.openURL(slug, draft: tool.has_draft) { store.host?.openInSafari(url) }
+        } label: {
+            HStack(spacing: 14) {
+                Image(systemName: "safari").font(.system(size: 28, weight: .semibold))
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(tool.has_draft ? "Try your draft in Safari" : "Open it in Safari")
+                        .font(Amber.font(20, .heavy))
+                    Text(tool.has_draft ? "Only this chat sees it until someone keeps it." : "Play with it, then come back and tell me.")
+                        .font(Amber.font(15)).multilineTextAlignment(.leading)
                 }
-                .font(Amber.font(17, .bold)).foregroundStyle(Amber.ink).underline()
+                Spacer(minLength: 0)
+                Image(systemName: "arrow.up.right").font(.system(size: 18, weight: .bold))
             }
+            .foregroundStyle(Amber.ink)
+            .padding(16)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .block(fill: Amber.amber, lifted: true)
         }
-        .padding(14).block()
+        .buttonStyle(.plain)
+        .contextMenu {
+            Button("Copy the link") { UIPasteboard.general.url = store.link(for: slug) }
+            Button("Send it to the chat") { store.send(tool, note: "Tap to open it together.") }
+        }
+    }
+
+    /// The talk button lives at the bottom, where a thumb already is.
+    private var dock: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            HoldToTalk(label: "Hold to talk to Amber", onPress: { speaker.stop() }) { heard in
+                Task { await store.say(slug, heard, open: { store.host?.openInSafari($0) }); await load() }
+            }
+            HStack(alignment: .bottom, spacing: 10) {
+                TextField("Or type it", text: $request, axis: .vertical)
+                    .font(Amber.font(18)).lineLimit(1...3).focused($focused)
+                    .padding(12).frame(minHeight: 48).block()
+                Button("Send") {
+                    focused = false
+                    let text = request
+                    request = ""
+                    Task { await store.say(slug, text, open: { store.host?.openInSafari($0) }); await load() }
+                }
+                .buttonStyle(BlockButton())
+                .disabled(request.trimmingCharacters(in: .whitespaces).isEmpty)
+            }
+            Toggle(isOn: $speaker.isOn) {
+                Text("Amber talks back").font(Amber.font(15, .bold)).foregroundStyle(Amber.body)
+            }
+            .tint(Amber.present)
+        }
+        .padding(16)
+        .background(Amber.paper)
+        .overlay(Rectangle().fill(Amber.ink).frame(height: 2), alignment: .top)
     }
 
     @ViewBuilder
@@ -317,55 +341,43 @@ struct ToolView: View {
         }
     }
 
-    /// The history (every kept version), then this conversation, then any
-    /// waiting change with its three buttons, then the ways to talk.
+    /// Only the conversation: what people said, what Amber said back, and
+    /// the waiting change's two buttons after the last word.
     @ViewBuilder
     private func conversation(_ tool: ToolItem) -> some View {
         VStack(alignment: .leading, spacing: 10) {
-            ForEach(versions.reversed()) { version in
-                Bubble(text: version.request?.isEmpty == false ? version.request! : "Made it", mine: true)
-                Bubble(text: version.current ? "Done. This is what everyone sees now." : "Done. That was version \(version.version).", mine: false) {
-                    if !version.current {
-                        Button("Go back to this") { Task { await restore(version.version) } }
-                            .font(Amber.font(16, .bold)).foregroundStyle(Amber.ink).underline()
-                    }
-                }
-            }
             ForEach(store.talk[slug] ?? []) { turn in
                 Bubble(text: turn.text, mine: turn.mine)
             }
             if tool.has_draft {
-                Bubble(text: "Your change is ready. Only people in this chat can try it until someone keeps it.", mine: false) {
-                    VStack(alignment: .leading, spacing: 10) {
-                        Button("Try it first") { showing = store.openURL(slug, draft: true) }
+                Bubble(text: "Want to keep it?", mine: false) {
+                    HStack(spacing: 10) {
+                        Button("Keep this") { Task { await store.keep(slug); await load() } }
+                            .buttonStyle(BlockButton(primary: true, full: true))
+                        Button("Put it back") { Task { await store.discard(slug); await load() } }
                             .buttonStyle(BlockButton(full: true))
-                        HStack(spacing: 10) {
-                            Button("Keep this") { Task { await store.keep(slug); await load() } }
-                                .buttonStyle(BlockButton(primary: true, full: true))
-                            Button("Put it back") { Task { await store.discard(slug); await load() } }
-                                .buttonStyle(BlockButton(full: true))
-                        }
                     }
                 }
             }
-            HoldToTalk(label: tool.has_draft ? "Hold to ask about it" : "Hold to talk to it") { heard in
-                Task { await store.say(slug, heard); await load() }
-            }
-            HStack(alignment: .bottom, spacing: 10) {
-                TextField("Or type: make the names bigger", text: $request, axis: .vertical)
-                    .font(Amber.font(18)).lineLimit(1...4).focused($focused)
-                    .padding(12).frame(minHeight: 52).block()
-                Button("Send") {
-                    focused = false
-                    let text = request
-                    request = ""
-                    Task { await store.say(slug, text); await load() }
+            if versions.count > 1 {
+                DisclosureGroup("Earlier versions (\(versions.count))") {
+                    ForEach(versions) { version in
+                        HStack {
+                            Text(version.request?.isEmpty == false ? version.request! : "The first version")
+                                .font(Amber.font(16)).foregroundStyle(Amber.body).lineLimit(2)
+                            Spacer()
+                            if version.current {
+                                Text("Live").font(Amber.font(15, .bold)).foregroundStyle(Amber.present)
+                            } else {
+                                Button("Go back") { Task { await restore(version.version) } }
+                                    .font(Amber.font(16, .bold)).foregroundStyle(Amber.ink).underline()
+                            }
+                        }
+                        .padding(.vertical, 6)
+                    }
                 }
-                .buttonStyle(BlockButton())
-                .disabled(request.trimmingCharacters(in: .whitespaces).isEmpty)
+                .font(Amber.font(17, .bold)).foregroundStyle(Amber.ink).tint(Amber.ink)
             }
-            Text("Ask it anything, or tell it what to change. Nothing changes for anyone until someone keeps it.")
-                .font(Amber.font(16)).foregroundStyle(Amber.muted)
         }
     }
 

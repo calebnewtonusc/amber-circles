@@ -1434,7 +1434,31 @@ app.post("/api/tools/:slug/talk", async (c) => {
     "select text from tool_notes where tool_id = $1 order by created_at desc limit 10",
     [tool.id],
   );
-  return c.json(await talk({ title: tool.title, html: tool.html, text, notes: notes.map((n) => n.text) }));
+  const { rows: memory } = await pool.query(
+    `select * from (select t.role, t.text, t.created_at, m.name from tool_talk t
+       left join members m on m.id = t.member_id where t.tool_id = $1
+      order by t.created_at desc limit 16) recent order by created_at`,
+    [tool.id],
+  );
+  const result = await talk({
+    title: tool.title,
+    html: tool.html,
+    text,
+    notes: notes.map((n) => n.text),
+    memory: memory.map((turn) => `${turn.role === "amber" ? "Amber" : turn.name || "Someone"}: ${turn.text}`),
+    speaker: owner.chatMember?.name,
+  });
+  await pool.query(
+    `insert into tool_talk (id, tool_id, member_id, role, text) values ($1, $2, $3, 'person', $4), ($5, $2, null, 'amber', $6)`,
+    [newId("turn"), tool.id, owner.chatMember?.id || null, text, newId("turn"), String(result.reply || "").slice(0, 2000)],
+  );
+  // A comment said out loud lands with the others, under the speaker's name.
+  if (result.kind === "comment")
+    await pool.query(
+      "insert into tool_notes (id, tool_id, member_id, text) values ($1, $2, $3, $4)",
+      [newId("note"), tool.id, owner.chatMember?.id || null, String(result.note).slice(0, 1000)],
+    );
+  return c.json(result);
 });
 
 // Amber says its replies out loud, so talking to a tool is a conversation
@@ -1457,6 +1481,20 @@ app.post("/api/speak", async (c) => {
   return new Response(response.body, { headers: { "content-type": "audio/mpeg", "cache-control": "no-store" } });
 });
 
+// The conversation so far, so reopening a tool picks up where the chat left
+// off, whoever was talking.
+app.get("/api/tools/:slug/talk", async (c) => {
+  const owner = await requireOwner(c);
+  const tool = await ownedTool(owner, c.req.param("slug"));
+  const { rows } = await pool.query(
+    `select * from (select t.id, t.role, t.text, t.created_at, m.name from tool_talk t
+       left join members m on m.id = t.member_id where t.tool_id = $1
+      order by t.created_at desc limit 40) recent order by created_at`,
+    [tool.id],
+  );
+  return c.json({ turns: rows });
+});
+
 // What a waiting change does, in plain words, so the person knows what to
 // look for before they try it.
 app.get("/api/tools/:slug/draft-summary", async (c) => {
@@ -1467,6 +1505,8 @@ app.get("/api/tools/:slug/draft-summary", async (c) => {
   );
   if (!rows[0]?.draft_html) throw new HttpError(404, "There is no change waiting.");
   const text = await describeChange({ before: rows[0].html, after: rows[0].draft_html, request: rows[0].draft_request || "" });
+  const tool = await ownedTool(owner, c.req.param("slug"));
+  await pool.query("insert into tool_talk (id, tool_id, role, text) values ($1, $2, 'amber', $3)", [newId("turn"), tool.id, text]);
   return c.json({ text });
 });
 

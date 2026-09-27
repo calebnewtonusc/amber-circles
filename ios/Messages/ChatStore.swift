@@ -38,6 +38,9 @@ final class ChatStore: ObservableObject {
     @Published var talk: [String: [Turn]] = [:]
     let speaker = Speaker()
 
+    /// Amber opens a tool by saying what it is, out loud, once.
+    func greet(_ slug: String, _ text: String) { reply(slug, text) }
+
     /// Amber's side of the conversation: shown, and said out loud.
     private func reply(_ slug: String, _ text: String) {
         talk[slug, default: []].append(Turn(text: text, mine: false))
@@ -162,26 +165,67 @@ final class ChatStore: ObservableObject {
         }
     }
 
-    /// Say something to a tool. A question is answered; a change is built,
-    /// then described in plain words so the person knows what to look for.
-    func say(_ slug: String, _ text: String) async {
+    /// Loads the kept conversation for a tool, so reopening it picks up where
+    /// the chat left off.
+    func loadTalk(_ slug: String) async {
+        guard let session else { return }
+        struct Row: Decodable { let role: String; let text: String; let name: String? }
+        struct Rows: Decodable { let turns: [Row] }
+        guard let rows: Rows = try? await API.call("api/tools/\(slug)/talk", chat: session.token) else { return }
+        talk[slug] = rows.turns.map { row in
+            Turn(text: row.role == "amber" || row.name == nil || row.name == session.name ? row.text : "\(row.name!): \(row.text)",
+                 mine: row.role != "amber")
+        }
+    }
+
+    /// Say something to a tool. The fast words never reach a model, the way
+    /// Chewbacca's music does (docs/VOICE-DESIGN.md): keep it, put it back,
+    /// open it. Everything else is answered, built, or saved as a comment.
+    func say(_ slug: String, _ text: String, open: (URL) -> Void = { _ in }) async {
         let words = text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard let session, !words.isEmpty else { return }
         talk[slug, default: []].append(Turn(text: words, mine: true))
+        let lower = words.lowercased()
+        let hasDraft = tool(slug)?.has_draft == true
+        if hasDraft, lower.range(of: #"^(keep (it|this|that)|looks good|ship it|yes keep)"#, options: .regularExpression) != nil {
+            await keep(slug); reply(slug, "Kept. Everyone in the chat has it now."); return
+        }
+        if hasDraft, lower.range(of: #"^(put it back|undo|never ?mind|throw (it|that) (out|away))"#, options: .regularExpression) != nil {
+            await discard(slug); reply(slug, "Put back. Nothing changed."); return
+        }
+        if lower.range(of: #"^(open|show me)( it| the (draft|app|site))?$"#, options: .regularExpression) != nil,
+           let url = openURL(slug, draft: hasDraft) {
+            reply(slug, "Opening it in Safari. Come back and tell me what you think.")
+            open(url); return
+        }
+        // Chewbacca's filler rule: nothing said for two seconds, say something
+        // shaped to the request, not "um".
+        var answered = false
+        let title = tool(slug)?.title ?? "it"
+        let filler = Task { [weak self] in
+            try? await Task.sleep(for: .seconds(2))
+            if !answered, let self, let token = self.session?.token {
+                await self.speaker.say("Let me look at \(title).", token: token)
+            }
+        }
         do {
             struct Reply: Decodable { let kind: String; let reply: String; let request: String? }
             let reply: Reply = try await API.call(
                 "api/tools/\(slug)/talk", method: "POST", body: ["text": words], chat: session.token)
+            answered = true
+            filler.cancel()
             self.reply(slug, reply.reply)
             guard reply.kind == "change" else { return }
             await change(slug, reply.request ?? words)
             if tool(slug)?.has_draft == true {
                 struct Summary: Decodable { let text: String }
                 if let summary: Summary = try? await API.call("api/tools/\(slug)/draft-summary", chat: session.token) {
-                    self.reply(slug, summary.text)
+                    self.reply(slug, summary.text + " Tap the link at the top to try it in Safari.")
                 }
             }
         } catch {
+            answered = true
+            filler.cancel()
             self.error = error.localizedDescription
         }
     }
@@ -230,8 +274,11 @@ final class ChatStore: ObservableObject {
     func send(_ tool: ToolItem, note: String) {
         guard let conversation = host?.activeConversation, let url = link(for: tool.slug) else { return }
         let layout = MSMessageTemplateLayout()
-        layout.caption = tool.title
-        layout.subcaption = note
+        // Game Pigeon's bubble says "Let's play 8-ball". Ours says what it is
+        // for (Caleb, 2026-09-27: "instead of let's play 8-ball, it says
+        // let's build together").
+        layout.caption = "Let's build together"
+        layout.subcaption = "\(tool.title). \(note)"
         layout.trailingSubcaption = "Amber"
         layout.image = BubbleArt.render(title: tool.title, by: tool.made_by ?? name)
         let message = MSMessage(session: conversation.selectedMessage?.session ?? MSSession())

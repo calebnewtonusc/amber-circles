@@ -194,16 +194,16 @@ export async function explain({ title, html }) {
 // added what?" gets an answer, "make the names bigger" gets a change.
 // Caleb, 2026-09-27: "you ask some questions and you're like, oh, how does it
 // do that?" Haiku reads the tool and decides.
-export async function talk({ title, html, text, notes = [] }) {
+export async function talk({ title, html, text, notes = [], memory = [], speaker = "" }) {
   const message = await anthropic().messages.create({
     model: "claude-haiku-4-5",
     max_tokens: 400,
     system:
-      'You are Amber, talking with someone about a small tool their group chat uses. They may be in their seventies. Decide if what they said asks you to CHANGE the tool, or is a QUESTION or comment. Reply with JSON only: {"kind":"change","request":"<their change, restated as one clear instruction>","reply":"<one short friendly sentence saying you are on it>"} or {"kind":"answer","reply":"<two or three plain sentences answering them from the file>"}. No jargon, no code words, no emojis, no em dashes.',
+      'You are Amber, talking with someone about a small tool their group chat uses. They may be in their seventies. Decide what they want. CHANGE: they want the tool to be different now. COMMENT: they are leaving a thought or feedback for the group to decide on later ("leave a note", "someone should", "I think it would be nice if"). QUESTION: anything else. Reply with JSON only: {"kind":"change","request":"<their change, restated as one clear instruction>","reply":"<one short friendly sentence saying you are on it>"} or {"kind":"comment","note":"<their thought, cleaned up in their own words>","reply":"<one short sentence saying you saved it for the chat>"} or {"kind":"answer","reply":"<two or three plain sentences answering them from the file, and if it helps, suggest opening it in Safari to see>"}. No jargon, no code words, no emojis, no em dashes.\n\nYou are heard, not read (rules from Chewbacca docs/VOICE-DESIGN.md): at most three short sentences. A change is acknowledged with "On it." plus the detail only when a mishearing would go somewhere wrong, never "Okay" or "Yes". Use the conversation so far: if someone else asked for something, you may say so by name.',
     messages: [
       {
         role: "user",
-        content: `Tool: "${title}"\n${notes.length ? `Thoughts people left: ${notes.join(" | ")}\n` : ""}File:\n${String(html).slice(0, 50000)}\n\nThey said: "${text}"`,
+        content: `Tool: "${title}"\nSpeaking now: ${speaker || "someone in the chat"}\n${memory.length ? `The conversation so far, oldest first:\n${memory.join("\n")}\n` : ""}${notes.length ? `Thoughts people left: ${notes.join(" | ")}\n` : ""}File:\n${String(html).slice(0, 50000)}\n\nThey said: "${text}"`,
       },
     ],
   });
@@ -211,6 +211,7 @@ export async function talk({ title, html, text, notes = [] }) {
   try {
     const parsed = JSON.parse(raw.slice(raw.indexOf("{"), raw.lastIndexOf("}") + 1));
     if (parsed.kind === "change" && parsed.request) return parsed;
+    if (parsed.kind === "comment" && parsed.note) return parsed;
     if (parsed.reply) return { kind: "answer", reply: parsed.reply };
   } catch {
     /* fall through: treat it as a change, which is the safe, reversible reading */
