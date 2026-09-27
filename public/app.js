@@ -190,6 +190,13 @@ function bindRetry() {
 
 async function render() {
   cleanupActive();
+  // A private sign-in link carries the owner key once, then it is stored and
+  // stripped from the address bar so it never lands in history or a screenshot.
+  const signIn = new URLSearchParams(location.search).get("owner");
+  if (signIn) {
+    store.set(OWNER_KEY, signIn);
+    history.replaceState({}, "", location.pathname);
+  }
   document.body.classList.remove("runner");
   const path = location.pathname;
   const toolMatch = path.match(/^\/t\/([\w-]+)\/?$/);
@@ -369,7 +376,7 @@ async function dashboard() {
     <a class="btn btn-primary" href="/make" data-link>${icon("plus")} Make something</a></div>
     <div id="requests"></div>
     <div id="tools" class="mt-4">${skeletonGrid()}</div>
-    <p class="fine mt-4">Use Claude or Claude Code already? <a href="/connect" data-link>Connect it</a> and it can publish here for you.</p>`,
+    <p class="fine mt-4"><a href="/connect" data-link>Your sign-in link and Claude connection</a>, to use Amber on another device or publish from Claude.</p>`,
   );
   loadRequests();
   try {
@@ -723,6 +730,7 @@ async function connectPage() {
   const claudeCode = `claude mcp add --transport http amber ${mcp}`;
   const prompt =
     "Build an attendance tracker for my club and share it with my cabinet circle on Amber. Members check in at each meeting, and I can see who has missed the last three so I can reach out.";
+  const signInLink = `${base}/?owner=${encodeURIComponent(key)}`;
   app.innerHTML = shell(
     "connect",
     `
@@ -744,6 +752,12 @@ async function connectPage() {
         <p class="kicker">Then ask</p>
         <p class="quote">"${esc(prompt)}"</p>
         <button class="btn btn-sm" data-copy="${esc(prompt)}">${icon("copy", "icon-sm")} Copy prompt</button>
+      </div>
+      <div class="card stack">
+        <p class="kicker">Your other phone or computer</p>
+        <h3 class="m-0">Your sign-in link</h3>
+        <p class="desc">Open this on another device to use Amber there. Anyone with it can manage your groups, so keep it to yourself.</p>
+        <div class="code-block"><code>${esc(signInLink)}</code><button class="btn btn-sm btn-ghost" data-copy="${esc(signInLink)}">${icon("copy", "icon-sm")} Copy</button></div>
       </div>
     </div>`,
   );
