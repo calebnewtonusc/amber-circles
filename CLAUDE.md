@@ -6,6 +6,7 @@ Read README.md first for what this is. These are the rules that each cost someth
 
 - Read DENY.md. The stance is editorial and its refusals are enforced by `test/deny.test.js`. The first build passed ux-lint and still looked generated, because the linter scores the absence of tells and nothing scored the stance.
 - Render what you changed and look at it at 1280 and 390 wide. Run ux-engine's `design-gate <url> --shots 3` and read the whole output, not a grep of it. On 2026-09-27 a filtered grep hid a failing verdict.
+- Run `AMBER_OWNER_KEY=... python3 tools/axe-check.py` after UI changes. It runs axe-core (WCAG 2.1 AA) on every screen at 1280 and 390 and exits 1 on any violation. It was clean on 2026-09-27; the soft grey had failed at 3.2:1.
 - The page CSP forbids inline `style=""` attributes. Add a class to `public/app.css` instead. Inline styles fail silently: spacing just disappears.
 
 ## Security rules that are tested
