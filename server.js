@@ -1489,12 +1489,24 @@ app.post("/api/tools/:slug/talk", async (c) => {
 // The ElevenLabs key never leaves the server. Alice was picked from the
 // account's voices for being described as clear, which is what older ears
 // need more than warmth or drama.
+// Text is cleaned in code before it is spoken, not left to the prompt:
+// pipecat does this in utils/text/transforms, and a link read aloud is noise.
+// The written reply keeps everything; only the voice drops it.
+function spoken(text) {
+  return String(text)
+    .replace(/https?:\/\/\S+/g, "")
+    .replace(/[*_#`>|]/g, "")
+    .replace(/\s{2,}/g, " ")
+    .trim();
+}
+
 const VOICE_ID = process.env.AMBER_VOICE_ID || "Xb7hH8MSUJpSbSDYk0k2";
 app.post("/api/speak", async (c) => {
   await requireOwner(c);
   if (!process.env.ELEVENLABS_API_KEY) throw new HttpError(503, "Amber's voice is not switched on here.");
   const body = await c.req.json().catch(() => ({}));
-  const text = requireText(body.text, "text", 700);
+  const text = spoken(requireText(body.text, "text", 700));
+  if (!text) return c.body(null, 204);
   const response = await fetch(`https://api.elevenlabs.io/v1/text-to-speech/${VOICE_ID}?output_format=mp3_44100_64`, {
     method: "POST",
     headers: { "xi-api-key": process.env.ELEVENLABS_API_KEY, "content-type": "application/json", accept: "audio/mpeg" },

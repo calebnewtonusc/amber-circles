@@ -349,7 +349,12 @@ struct ToolView: View {
             ForEach(store.talk[slug] ?? []) { turn in
                 Bubble(text: turn.text, mine: turn.mine)
             }
-            if tool.has_draft {
+            if let started = store.changing[slug] {
+                TimelineView(.periodic(from: .now, by: 1)) { context in
+                    Bubble(text: "Making that change. \(Int(context.date.timeIntervalSince(started))) seconds so far. You can keep talking to me.", mine: false)
+                }
+            }
+            if tool.has_draft, store.changing[slug] == nil {
                 Bubble(text: "Want to keep it?", mine: false) {
                     HStack(spacing: 10) {
                         Button("Keep this") { Task { await store.keep(slug); await load() } }

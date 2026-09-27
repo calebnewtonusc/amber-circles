@@ -37,6 +37,10 @@ final class ChatStore: ObservableObject {
     /// screen replacing the tool's screen.
     @Published var talk: [String: [Turn]] = [:]
     let speaker = Speaker()
+    /// Changes being built right now, by tool, with when they started. The
+    /// conversation stays open while they run (pipecat's async tools,
+    /// processors/aggregators/async_tool_messages.py).
+    @Published var changing: [String: Date] = [:]
 
     /// Amber opens a tool by saying what it is, out loud, once.
     func greet(_ slug: String, _ text: String) { reply(slug, text) }
@@ -216,17 +220,33 @@ final class ChatStore: ObservableObject {
             filler.cancel()
             self.reply(slug, reply.reply)
             guard reply.kind == "change" else { return }
-            await change(slug, reply.request ?? words)
-            if tool(slug)?.has_draft == true {
-                struct Summary: Decodable { let text: String }
-                if let summary: Summary = try? await API.call("api/tools/\(slug)/draft-summary", chat: session.token) {
-                    self.reply(slug, summary.text + " Tap the link at the top to try it in Safari.")
-                }
+            if changing[slug] != nil {
+                self.reply(slug, "I'm still making the last change. Tell me again when it's ready.")
+                return
             }
+            let request = reply.request ?? words
+            Task { await self.changeInBackground(slug, request) }
         } catch {
             answered = true
             filler.cancel()
             self.error = error.localizedDescription
+        }
+    }
+
+    /// Builds a change without taking over the screen, then says when it is
+    /// ready. A failure is always said out loud, never left silent.
+    private func changeInBackground(_ slug: String, _ request: String) async {
+        guard let session else { return }
+        changing[slug] = Date()
+        defer { changing[slug] = nil }
+        do {
+            _ = try await API.build(request: request, chat: session.chat, slug: slug, token: session.token) { _, _ in }
+            await refresh()
+            struct Summary: Decodable { let text: String }
+            let summary: Summary? = try? await API.call("api/tools/\(slug)/draft-summary", chat: session.token)
+            reply(slug, "It's updated. " + (summary?.text ?? "") + " Tap the link at the top to try it in Safari.")
+        } catch {
+            reply(slug, "That change didn't go through. \(error.localizedDescription)")
         }
     }
 
