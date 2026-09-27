@@ -166,7 +166,6 @@ function shell(active, content) {
           ${link("/make", "Make", "make")}
           ${link("/", "Tools", "tools")}
           ${link("/circles", "Circles", "circles")}
-          ${link("/connect", "Connect Claude", "connect")}
         </nav>
       </header>
       <main id="main">${content}</main>
@@ -369,7 +368,8 @@ async function dashboard() {
     <div class="masthead"><div><p class="kicker">Your tools</p><h2>What your circles are using</h2></div>
     <a class="btn btn-primary" href="/make" data-link>${icon("plus")} Make something</a></div>
     <div id="requests"></div>
-    <div id="tools" class="mt-4">${skeletonGrid()}</div>`,
+    <div id="tools" class="mt-4">${skeletonGrid()}</div>
+    <p class="fine mt-4">Use Claude or Claude Code already? <a href="/connect" data-link>Connect it</a> and it can publish here for you.</p>`,
   );
   loadRequests();
   try {
@@ -1069,7 +1069,7 @@ async function toolPage(slug) {
             ? `<section class="sheet stack draft">
                 <p class="kicker">Your change is ready to try</p>
                 <p class="quote">"${esc(tool.draft_request)}"</p>
-                <p class="lede">Try it on the left. If you like it, keep it and everyone gets it. If not, put it back and nothing changes.</p>
+                <p class="lede">Try it in the preview. If you like it, keep it and everyone gets it. If not, put it back and nothing changes.</p>
                 <div class="row"><button class="btn btn-primary btn-lg" id="keep">Keep this</button><button class="btn btn-lg" id="discard">Put it back</button></div>
               </section>`
             : `<form class="stack" id="change">

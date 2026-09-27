@@ -1041,3 +1041,4 @@ body.runner {
 .ideas { display: grid; justify-items: start; gap: 0; }
 .ideas .fine { margin-bottom: var(--space-1); }
 .versions .tag { white-space: nowrap; }
+.idea { text-align: left; }
