@@ -307,6 +307,7 @@ function landing() {
             </form>
             <p class="error-text" id="start-error" role="alert"></p>
             <p class="fine enter enter-4">Free while we are in beta. Your first circle takes a minute.</p>
+            <p class="fine enter enter-4" id="demo-link" hidden>Or <a href="#">open the example prayer list as Ruth</a>, a member of a Monday Bible class.</p>
           </div>
           ${specimenView()}
         </section>
@@ -318,6 +319,17 @@ function landing() {
       </main>
     </div>`;
   runSpecimen();
+  fetch("/api/demo")
+    .then((response) => response.json())
+    .then(({ link }) => {
+      const line = app.querySelector("#demo-link");
+      if (!link || !line) return;
+      line.querySelector("a").href = link;
+      line.hidden = false;
+    })
+    .catch(() => {
+      /* no demo on this deployment; the line stays hidden */
+    });
   const form = app.querySelector("#start");
   form.addEventListener("submit", async (event) => {
     event.preventDefault();

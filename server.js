@@ -674,6 +674,11 @@ app.use("*", async (c, next) => {
   }
 });
 
+// A judge opening the site from Devpost should see a tool with data in it
+// before building anything. AMBER_DEMO_LINK is a member link into the demo
+// circle, set only on the deployment that has one.
+app.get("/api/demo", (c) => c.json({ link: process.env.AMBER_DEMO_LINK || null }));
+
 app.get("/healthz", async (c) => {
   await pool.query("select 1");
   return c.json({ ok: true });
