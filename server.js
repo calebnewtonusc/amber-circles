@@ -886,13 +886,16 @@ app.post("/api/build", async (c) => {
   return streamSSE(c, async (sse) => {
     const send = (event, data) => sse.writeSSE({ event, data: JSON.stringify(data) });
     try {
-      const { html } = await build({
+      const { html, usage } = await build({
         request,
         circleName: circle.name,
         people: people.map((person) => person.name),
         currentHtml: existing?.html,
         onProgress: (progress) => send("progress", progress),
       });
+      // Token counts only, never the request text: the cost-per-build number
+      // on the pitch deck has to come from real builds, not a guess.
+      console.log(JSON.stringify({ event: "build", input: usage.input_tokens, output: usage.output_tokens, edit: Boolean(existing) }));
       if (existing) {
         await pool.query("update tools set draft_html = $3, draft_request = $4 where owner_id = $1 and slug = $2", [owner.id, existing.slug, html, request]);
         await send("done", { slug: existing.slug, draft: true });
