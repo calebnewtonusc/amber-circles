@@ -299,18 +299,14 @@ test("presence: a member polling shows up as here now", async () => {
     })
   ).json;
   const dottie = circles[0].members.find((m) => m.name === "Dottie");
-  assert.equal(dottie.here_now, false);
-  await call(`/api/run/${slug}/rpc`, {
-    method: "POST",
-    member: dottie.token,
-    body: { op: "stamp" },
-  });
-  const after = (await call("/api/owner", { owner })).json;
-  assert.equal(
-    after.circles[0].members.find((m) => m.name === "Dottie").here_now,
-    true,
-  );
-  assert.equal(after.tools[0].here_now, 1);
+  const other = (await call("/api/tools", { method: "POST", owner, body: { title: "Q", circle: circles[0].id, html: page("y") } })).json.slug;
+  const toolBySlug = async (which) => (await call("/api/owner", { owner })).json.tools.find((t) => t.slug === which);
+  assert.deepEqual((await toolBySlug(slug)).here_now_ids, []);
+  await call(`/api/run/${slug}/rpc`, { method: "POST", member: dottie.token, body: { op: "stamp" } });
+  assert.deepEqual((await toolBySlug(slug)).here_now_ids, [dottie.id]);
+  // Regression, 2026-09-27: presence was per member, so being on one tool
+  // showed you as using every tool in the circle.
+  assert.deepEqual((await toolBySlug(other)).here_now_ids, [], "Dottie is not on the other tool");
 });
 
 test("people remove their own entries; only the owner removes anyone's", async () => {

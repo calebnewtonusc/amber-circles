@@ -313,8 +313,7 @@ async function ownerOverview(owner, base) {
   const circles = await pool.query(
     `select c.id, c.name, c.created_at,
             coalesce(json_agg(json_build_object(
-              'id', m.id, 'name', m.name, 'phone', m.phone, 'is_owner', m.is_owner, 'token_sealed', m.token_sealed,
-              'here_now', coalesce(m.last_seen > now() - interval '2 minutes', false)
+              'id', m.id, 'name', m.name, 'phone', m.phone, 'is_owner', m.is_owner, 'token_sealed', m.token_sealed
             ) order by m.is_owner desc, m.created_at) filter (where m.id is not null), '[]') as members
        from circles c left join members m on m.circle_id = c.id
       where c.owner_id = $1
@@ -330,7 +329,8 @@ async function ownerOverview(owner, base) {
             (select max(o.at) from opens o where o.tool_id = t.id) as last_open,
             (select count(*) from records r where r.tool_id = t.id)::int as record_count,
             (select count(*) from access_requests a where a.tool_id = t.id and a.status = 'pending')::int as pending_requests,
-            (select count(*) from members m where m.circle_id = t.circle_id and m.last_seen > now() - interval '2 minutes')::int as here_now,
+            (select count(*) from presence p where p.tool_id = t.id and p.last_seen > now() - interval '2 minutes')::int as here_now,
+            (select coalesce(json_agg(p.member_id), '[]') from presence p where p.tool_id = t.id and p.last_seen > now() - interval '2 minutes') as here_now_ids,
             (select coalesce(json_agg(distinct o.member_id), '[]') from opens o where o.tool_id = t.id) as opened_by
        from tools t join circles c on c.id = t.circle_id
       where t.owner_id = $1 order by t.updated_at desc`,
@@ -383,9 +383,11 @@ async function bridge(access, body) {
       // A fingerprint of the tool's shared data, polled by the frame so one
       // person's check-in shows up on everyone else's screen. The same poll is
       // the presence heartbeat.
-      await pool.query("update members set last_seen = now() where id = $1", [
-        access.member_id,
-      ]);
+      await pool.query(
+        `insert into presence (tool_id, member_id, last_seen) values ($1, $2, now())
+         on conflict (tool_id, member_id) do update set last_seen = now()`,
+        [access.tool_id, access.member_id],
+      );
       const {
         rows: [row],
       } = await pool.query(
@@ -677,7 +679,9 @@ app.use("*", async (c, next) => {
 // A judge opening the site from Devpost should see a tool with data in it
 // before building anything. AMBER_DEMO_LINK is a member link into the demo
 // circle, set only on the deployment that has one.
-app.get("/api/demo", (c) => c.json({ link: process.env.AMBER_DEMO_LINK || null }));
+app.get("/api/demo", (c) =>
+  c.json({ link: process.env.AMBER_DEMO_LINK || null }),
+);
 
 app.get("/healthz", async (c) => {
   await pool.query("select 1");
@@ -1006,7 +1010,10 @@ app.post("/api/build", async (c) => {
   );
   const allowed = allowBuild(owner.id);
   if (allowed === "site")
-    throw new HttpError(503, "Amber has built a lot of tools today and is resting. Try again tomorrow.");
+    throw new HttpError(
+      503,
+      "Amber has built a lot of tools today and is resting. Try again tomorrow.",
+    );
   if (!allowed)
     throw new HttpError(
       429,
@@ -1120,16 +1127,24 @@ app.post("/api/tools/:slug/restore", async (c) => {
     request: `Went back to version ${Number(version)}${withEntries ? ", entries too" : ""}`,
   });
   if (withEntries) {
-    const { rows: [old] } = await pool.query(
+    const {
+      rows: [old],
+    } = await pool.query(
       `select v.data_snapshot, t.id as tool_id from tool_versions v join tools t on t.id = v.tool_id
         where t.owner_id = $1 and t.slug = $2 and v.version = $3`,
       [owner.id, c.req.param("slug"), Number(version)],
     );
-    if (!old?.data_snapshot) throw new HttpError(409, "That version has no saved entries to put back. The tool itself went back.");
+    if (!old?.data_snapshot)
+      throw new HttpError(
+        409,
+        "That version has no saved entries to put back. The tool itself went back.",
+      );
     const client = await pool.connect();
     try {
       await client.query("begin");
-      await client.query("delete from records where tool_id = $1", [old.tool_id]);
+      await client.query("delete from records where tool_id = $1", [
+        old.tool_id,
+      ]);
       // One statement for the whole snapshot. An author who has since left
       // the group keeps their entry, unattributed, rather than blocking it.
       await client.query(

@@ -115,3 +115,13 @@ alter table tools add column if not exists draft_request text;
 -- (research/vibe-coding-vs-docs.md, pain 4). Null when the snapshot would
 -- have been too large to keep.
 alter table tool_versions add column if not exists data_snapshot jsonb;
+
+-- Presence is per tool. Tracking it per member made the tool page say Harold
+-- was using the attendance tracker while he was on the prayer list, next to
+-- "Not opened yet: Harold" (render review, 2026-09-27).
+create table if not exists presence (
+  tool_id    text not null references tools(id) on delete cascade,
+  member_id  text not null references members(id) on delete cascade,
+  last_seen  timestamptz not null default now(),
+  primary key (tool_id, member_id)
+);

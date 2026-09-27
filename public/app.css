@@ -1056,3 +1056,21 @@ body.runner {
 :root { --welcome-height: 84px; }
 body.welcoming .run-frame { inset: calc(var(--bar-height) + var(--welcome-height)) 0 0 0; height: calc(100% - var(--bar-height) - var(--welcome-height)); }
 @media (min-width: 700px) { :root { --welcome-height: 56px; } }
+
+/* ---------- readable for the owner too, 2026-09-27 ---------- */
+/* The owner might be a grandparent. NN/g's seniors research names small text
+   as the persistent complaint (research/vibe-coding-vs-docs.md, traps), and
+   the first pass set body copy at 15px with 12 to 13px notes. The root now
+   follows the browser's own text size, and nothing a person reads is under
+   14px. */
+html { font-size: 106.25%; }
+body { font-size: 1rem; }
+.fine, .sub, .field .hint, .ledger-head, .ledger-head .num, .num small, .stat-of, .cell-label, .phone-label, .specimen-meta, .specimen-foot { font-size: 14px; }
+.kicker { font-size: 12px; }
+.lede, .card .desc, .person .who span, .versions li span, .ask .sub { font-size: 16px; }
+.field label, .tag, .nav-links a, .run-me { font-size: 15px; }
+.btn { font-size: 16px; }
+.btn-sm { font-size: 15px; }
+.welcome p { font-size: 16px; }
+.specimen li { font-size: 16px; }
+.input, textarea.input, select.input { font-size: 17px; }

@@ -1138,7 +1138,7 @@ async function toolPage(slug) {
   }
   const circle = data.circles.find((entry) => entry.id === tool.circle_id);
   const token = ownerToken(tool.circle_id);
-  const hereNow = circle.members.filter((member) => member.here_now && !member.is_owner).map((member) => member.name.split(" ")[0]);
+  const hereNow = circle.members.filter((member) => !member.is_owner && (tool.here_now_ids || []).includes(member.id)).map((member) => member.name.split(" ")[0]);
   const others = circle.members.filter((member) => !member.is_owner);
   const notYet = others.filter((member) => !(tool.opened_by || []).includes(member.id)).map((member) => member.name.split(" ")[0]);
   app.querySelector("main").innerHTML = `
