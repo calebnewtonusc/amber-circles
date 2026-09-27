@@ -219,6 +219,52 @@ function ownerToken(circleId) {
 
 // ---------- landing ----------
 
+// The one committed mechanism, shown rather than described: a circle filling
+// in, name by name, and the two people who have not been in for a while.
+// STATE-SWAP, per DENY.md: content steps, nothing travels.
+const SPECIMEN = [
+  { name: "Tyler", when: "here, 6:02" },
+  { name: "Maya", when: "here, 6:03" },
+  { name: "Priya", when: "here, 6:05" },
+  { name: "Diego", when: "here, 6:06" },
+  { name: "Jordan", when: "missed the last 3", drifting: true },
+  { name: "Sam", when: "missed the last 2", drifting: true },
+];
+
+function specimenView() {
+  return `
+    <div class="specimen enter enter-5" aria-label="Example: a circle checking in">
+      <div class="specimen-head"><span class="specimen-title">GM Attendance</span><span class="specimen-count" id="specimen-count">0 of 6</span></div>
+      <p class="specimen-meta">Example circle · Club cabinet · published by Claude</p>
+      <ol>${SPECIMEN.map((person, index) => `<li data-index="${index}"><span class="mark"></span><span>${esc(person.name)}</span><span class="when">not yet</span></li>`).join("")}</ol>
+      <p class="specimen-foot">Each person opened it from their own text. Nobody outside the cabinet can.</p>
+    </div>`;
+}
+
+function runSpecimen() {
+  const rows = [...app.querySelectorAll(".specimen li")];
+  const count = app.querySelector("#specimen-count");
+  if (!rows.length) return;
+  let step = 0;
+  const here = SPECIMEN.filter((person) => !person.drifting).length;
+  const tick = () => {
+    if (!document.body.contains(count)) return clearInterval(timer);
+    if (step > SPECIMEN.length + 2) {
+      step = 0;
+      rows.forEach((row) => { row.className = ""; row.querySelector(".when").textContent = "not yet"; });
+    } else if (step < SPECIMEN.length) {
+      const person = SPECIMEN[step];
+      rows[step].className = person.drifting ? "is-drifting" : "is-here";
+      rows[step].querySelector(".when").textContent = person.when;
+    }
+    count.textContent = `${Math.min(step + 1, here)} of ${SPECIMEN.length}`;
+    if (step === 0 && !rows[0].className) count.textContent = `0 of ${SPECIMEN.length}`;
+    step += 1;
+  };
+  const timer = setInterval(tick, 1600);
+  setTimeout(tick, 700);
+}
+
 function landing() {
   app.innerHTML = `
     <div class="page">
@@ -228,27 +274,27 @@ function landing() {
       <main id="main">
         <section class="hero">
           <div>
-            <p class="kicker">A cloud for small software</p>
-            <h1>Ask Claude for a tool. Share it <em>like a Google Doc.</em></h1>
-            <p class="lede">The tool your club, team or trip needs, built by Claude and hosted by Amber. Only the people in your circle can open it, each from their own link. No deploys, no logins to set up.</p>
-            <form id="start">
+            <p class="kicker enter enter-1">A cloud for small software</p>
+            <h1 class="enter enter-2">Ask Claude for a tool. Share it <em>like a Google Doc.</em></h1>
+            <p class="lede enter enter-3">The tool your club, team or trip needs, built by Claude and hosted by Amber. Only the people in your circle can open it, each from their own link. No deploys, no logins to set up.</p>
+            <form id="start" class="enter enter-4">
               <label class="skip" for="start-name">Your name</label>
               <input class="input" id="start-name" name="name" placeholder="Your name" autocomplete="name" required maxlength="80">
-              <button class="btn btn-primary" type="submit">Start ${icon("arrow")}</button>
+              <button class="btn btn-primary btn-lg" type="submit">Start a circle ${icon("arrow")}</button>
             </form>
             <p class="error-text" id="start-error" role="alert"></p>
+            <p class="fine enter enter-4">Free while we are in beta. Your first circle takes a minute.</p>
           </div>
-          <div class="card">
-            <p class="kicker">How it works</p>
-            <div class="steps mt-4">
-              <div class="step"><div><b>Make a circle</b><span>Your cabinet, your team, your roommates. Everyone gets their own link.</span></div></div>
-              <div class="step"><div><b>Ask Claude for a tool</b><span>"Build our attendance tracker and share it with the cabinet."</span></div></div>
-              <div class="step"><div><b>They open it from a text</b><span>Only people in the circle get in. The tool knows who they are and keeps shared data.</span></div></div>
-            </div>
-          </div>
+          ${specimenView()}
+        </section>
+        <section class="notes">
+          <div class="note"><b><span>1</span>Make a circle</b><p>Your cabinet, your team, your roommates. Everyone gets a personal link, so every tool knows who opened it.</p></div>
+          <div class="note"><b><span>2</span>Ask Claude</b><p>"Build our attendance tracker and share it with the cabinet." Claude writes it and publishes it to Amber.</p></div>
+          <div class="note"><b><span>3</span>They open a text</b><p>The tool runs sealed off from the internet. It sees names, never phone numbers, and keeps data the circle shares.</p></div>
         </section>
       </main>
     </div>`;
+  runSpecimen();
   const form = app.querySelector("#start");
   form.addEventListener("submit", async (event) => {
     event.preventDefault();
@@ -256,16 +302,13 @@ function landing() {
     button.disabled = true;
     button.textContent = "Starting…";
     try {
-      const { key } = await api("/api/owners", {
-        method: "POST",
-        body: { name: form.name.value },
-      });
+      const { key } = await api("/api/owners", { method: "POST", body: { name: form.name.value } });
       store.set(OWNER_KEY, key);
       navigate("/circles");
     } catch (error) {
       app.querySelector("#start-error").textContent = error.message;
       button.disabled = false;
-      button.innerHTML = `Start ${icon("arrow")}`;
+      button.innerHTML = `Start a circle ${icon("arrow")}`;
     }
   });
 }
@@ -273,16 +316,16 @@ function landing() {
 // ---------- dashboard ----------
 
 function skeletonGrid(count = 3) {
-  return `<div class="grid">${Array.from({ length: count }, () => '<div class="skeleton h-210"></div>').join("")}</div>`;
+  return `<div class="ledger">${Array.from({ length: count }, () => '<div class="ledger-row"><div class="skeleton skeleton-line"></div></div>').join("")}</div>`;
 }
 
 async function dashboard() {
   app.innerHTML = shell(
     "tools",
     `
-    <div class="section-head"><div><p class="kicker">Your tools</p><h2>What your circles are using</h2></div>
+    <div class="masthead"><div><p class="kicker">Your tools</p><h2>What your circles are using</h2></div>
     <a class="btn btn-primary" href="/new" data-link>${icon("plus")} Publish a tool</a></div>
-    <div id="tools">${skeletonGrid()}</div>`,
+    <div id="tools" class="mt-4">${skeletonGrid()}</div>`,
   );
   try {
     const data = await loadOverview(true);
@@ -292,45 +335,40 @@ async function dashboard() {
         glyph: "users",
         title: "Start with a circle",
         body: "A tool is shared with one circle: the people it is for. Make yours first, then ask Claude to build into it.",
-        action:
-          '<a class="btn btn-primary" href="/circles" data-link>Make a circle</a>',
+        action: '<a class="btn btn-primary" href="/circles" data-link>Make a circle</a>',
       });
       return;
     }
     if (!data.tools.length) {
       target.innerHTML = stateView({
         glyph: "sparkle",
-        title: "No tools yet",
-        body: "Connect Claude and ask for one, or start from the attendance tracker and publish it to a circle in one step.",
-        action:
-          '<div class="row justify-center"><a class="btn btn-primary" href="/connect" data-link>Connect Claude</a><a class="btn" href="/new?template=attendance" data-link>Use the attendance tracker</a></div>',
+        title: "Nothing published yet",
+        body: "Connect Claude and ask for a tool, or publish the attendance tracker to a circle in one step.",
+        action: '<div class="row"><a class="btn btn-primary" href="/connect" data-link>Connect Claude</a><a class="btn" href="/new?template=attendance" data-link>Use the attendance tracker</a></div>',
       });
       return;
     }
-    target.innerHTML = `<div class="grid">${data.tools
-      .map((tool) => {
-        const circle = data.circles.find(
-          (entry) => entry.id === tool.circle_id,
-        );
-        const size = circle?.members.length || 0;
-        const token = ownerToken(tool.circle_id);
-        return `
-        <article class="card">
-          <div class="row"><span class="tag">${icon("users", "icon-sm")} ${esc(tool.circle_name)}</span><span class="spacer"></span><span class="tag tag-neutral">v${tool.version}</span></div>
-          <h3>${esc(tool.title)}</h3>
-          <p class="desc">${esc(tool.description || "No description yet.")}</p>
-          <div class="stat-row">
-            <div class="stat"><b>${tool.people_opened}<span class="stat-of"> / ${size}</span></b><span>people opened it</span></div>
-            <div class="stat"><b>${tool.record_count}</b><span>saved entries</span></div>
-            <div class="stat"><b class="stat-small">${timeAgo(tool.last_open)}</b><span>last opened</span></div>
-          </div>
-          <div class="card-foot">
-            <a class="btn btn-sm btn-primary" href="/t/${esc(tool.slug)}${token ? `?m=${encodeURIComponent(token)}` : ""}">${icon("open", "icon-sm")} Open</a>
-            <a class="btn btn-sm" href="/share/${esc(tool.slug)}" data-link>${icon("share", "icon-sm")} Share links</a>
-          </div>
-        </article>`;
-      })
-      .join("")}</div>`;
+    target.innerHTML = `
+      <div class="ledger">
+        <div class="ledger-head ledger-tools"><span>Tool</span><span>Circle</span><span class="num">Opened</span><span class="num">Entries</span><span class="num">Last open</span><span></span></div>
+        ${data.tools
+          .map((tool) => {
+            const circle = data.circles.find((entry) => entry.id === tool.circle_id);
+            const size = circle?.members.length || 0;
+            const token = ownerToken(tool.circle_id);
+            const open = `/t/${esc(tool.slug)}${token ? `?m=${encodeURIComponent(token)}` : ""}`;
+            return `
+            <div class="ledger-row ledger-tools">
+              <div><a class="title" href="${open}">${esc(tool.title)}</a><p class="sub">${esc(tool.description || "No description yet.")}</p></div>
+              <div class="tag">${icon("users", "icon-sm")} ${esc(tool.circle_name)}</div>
+              <div class="num"><span class="cell-label">Opened</span>${tool.people_opened}<small> of ${size}</small></div>
+              <div class="num"><span class="cell-label">Entries</span>${tool.record_count}</div>
+              <div class="num"><span class="cell-label">Last open</span><small>${timeAgo(tool.last_open)}</small></div>
+              <div class="actions"><a class="btn btn-sm" href="/share/${esc(tool.slug)}" data-link>${icon("share", "icon-sm")} Links</a><a class="btn btn-sm btn-primary" href="${open}">Open</a></div>
+            </div>`;
+          })
+          .join("")}
+      </div>`;
   } catch (error) {
     if (error.status === 401) {
       store.remove(OWNER_KEY);
@@ -358,16 +396,16 @@ async function circlesPage() {
   app.innerHTML = shell(
     "circles",
     `
-    <div class="section-head"><div><p class="kicker">Circles</p><h2>Who your tools are for</h2><p class="lede mt-1">A circle is the permission. Share a tool with one and only those people can open it, each through their own link.</p></div></div>
-    <div class="grid items-start">
-      <form class="card stack" id="new-circle">
-        <h3 class="mt-0">New circle</h3>
+    <div class="masthead"><div><p class="kicker">Circles</p><h2>Who your tools are for</h2><p class="lede">A circle is the permission. Share a tool with one and only those people can open it, each through their own link.</p></div></div>
+    <div class="split">
+      <div id="circle-list">${skeletonGrid(2)}</div>
+      <form class="sheet stack" id="new-circle">
+        <p class="kicker">New circle</p>
         <div class="field"><label for="circle-name">Name</label><input class="input" id="circle-name" name="name" placeholder="TTS Cabinet" required maxlength="80"></div>
         <div class="field"><label for="circle-members">People, one per line</label><textarea class="input" id="circle-members" name="members" placeholder="Tyler Larsen, 310 555 0100&#10;Maya Chen, 213 555 0199"></textarea><span class="hint">Name, then phone. The phone is only used to text them their link, and tools never see it.</span></div>
         <p class="error-text" id="circle-error" role="alert"></p>
         <button class="btn btn-primary" type="submit">${icon("plus")} Create circle</button>
       </form>
-      <div id="circle-list" class="stack">${'<div class="skeleton h-96"></div>'.repeat(2)}</div>
     </div>`,
   );
   app.querySelector("#new-circle").addEventListener("submit", async (event) => {
@@ -378,10 +416,7 @@ async function circlesPage() {
     try {
       const { id } = await api("/api/circles", {
         method: "POST",
-        body: {
-          name: form.name.value,
-          members: parseMembers(form.members.value),
-        },
+        body: { name: form.name.value, members: parseMembers(form.members.value) },
       });
       toast("Circle created");
       navigate(`/circles/${id}`);
@@ -394,21 +429,19 @@ async function circlesPage() {
     const data = await loadOverview(true);
     const list = app.querySelector("#circle-list");
     list.innerHTML = data.circles.length
-      ? data.circles
-          .map(
-            (circle) => `
-        <a class="card card-link plain-link" href="/circles/${esc(circle.id)}" data-link>
-          <div class="row"><h3 class="m-0">${esc(circle.name)}</h3><span class="spacer"></span>${icon("arrow")}</div>
-          <p class="desc">${circle.members.length} ${circle.members.length === 1 ? "person" : "people"}: ${esc(
-            circle.members
-              .map((member) => member.name)
-              .slice(0, 5)
-              .join(", "),
-          )}${circle.members.length > 5 ? "…" : ""}</p>
-        </a>`,
-          )
-          .join("")
-      : `<div class="card">${stateView({ glyph: "users", title: "No circles yet", body: "Make your first one on the left. You can add people any time." })}</div>`;
+      ? `<div class="ledger">${data.circles
+          .map((circle) => {
+            const shared = data.tools.filter((tool) => tool.circle_id === circle.id).length;
+            return `
+            <div class="ledger-row ledger-circles">
+              <div><a class="title" href="/circles/${esc(circle.id)}" data-link>${esc(circle.name)}</a><p class="sub">${shared} ${shared === 1 ? "tool" : "tools"} shared here</p></div>
+              <div class="sub">${esc(circle.members.map((member) => member.name).slice(0, 5).join(", "))}${circle.members.length > 5 ? "…" : ""}</div>
+              <div class="num"><span class="cell-label">People</span>${circle.members.length}</div>
+              <div class="actions"><a class="btn btn-sm" href="/circles/${esc(circle.id)}" data-link>Open ${icon("arrow", "icon-sm")}</a></div>
+            </div>`;
+          })
+          .join("")}</div>`
+      : stateView({ glyph: "users", title: "No circles yet", body: "Make your first one with the form. You can add people any time." });
   } catch (error) {
     app.querySelector("#circle-list").innerHTML = errorView(error);
     bindRetry();
@@ -459,7 +492,7 @@ async function circlePage(id) {
     const tools = data.tools.filter((tool) => tool.circle_id === id);
     app.querySelector("main").innerHTML = `
       <a class="btn btn-ghost btn-sm" href="/circles" data-link>${icon("back", "icon-sm")} Circles</a>
-      <div class="section-head mt-3"><div><p class="kicker">Circle</p><h2>${esc(circle.name)}</h2></div></div>
+      <div class="masthead mt-3"><div><p class="kicker">Circle</p><h2>${esc(circle.name)}</h2></div></div>
       <div class="grid items-start">
         <div class="card">
           <h3 class="mt-0">People</h3>
@@ -544,7 +577,7 @@ async function sharePage(slug) {
       `${data.base}/t/${tool.slug}?m=${encodeURIComponent(member.token)}`;
     app.querySelector("main").innerHTML = `
       <a class="btn btn-ghost btn-sm" href="/" data-link>${icon("back", "icon-sm")} Tools</a>
-      <div class="section-head mt-3"><div><p class="kicker">Share · ${esc(circle.name)}</p><h2>${esc(tool.title)}</h2>
+      <div class="masthead mt-3"><div><p class="kicker">Share · ${esc(circle.name)}</p><h2>${esc(tool.title)}</h2>
       <p class="lede mt-1">Everyone gets their own link, so the tool knows who is checking in. Anyone outside ${esc(circle.name)} who opens the tool is turned away.</p></div></div>
       <div class="card">
         <div class="people">${circle.members
@@ -585,7 +618,7 @@ async function newToolPage() {
       return;
     }
     app.querySelector("main").innerHTML = `
-      <div class="section-head"><div><p class="kicker">Publish</p><h2>Put a tool in front of a circle</h2>
+      <div class="masthead"><div><p class="kicker">Publish</p><h2>Put a tool in front of a circle</h2>
       <p class="lede mt-1">The fastest way is to <a href="/connect" data-link>connect Claude</a> and ask. This page is for pasting a file an agent already wrote.</p></div></div>
       <form class="card stack" id="publish">
         <div class="grid gap-3">
@@ -648,7 +681,7 @@ async function connectPage() {
   app.innerHTML = shell(
     "connect",
     `
-    <div class="section-head"><div><p class="kicker">Connect Claude</p><h2>Let your agent publish for you</h2>
+    <div class="masthead"><div><p class="kicker">Connect Claude</p><h2>Let your agent publish for you</h2>
     <p class="lede mt-1">Once Claude is connected, you describe the tool and Claude builds it, publishes it here, and shares it with the circle you name.</p></div></div>
     <div class="grid items-start">
       <div class="card stack">
