@@ -959,7 +959,7 @@ async function runner(slug) {
       app.querySelector(".welcome")?.remove();
     });
   }
-  activeCleanup = mountTool({ container: app, slug, token, session });
+  activeCleanup = mountTool({ container: app, slug, token, session, draft: params.get("draft") === "1" });
   app.querySelector("#copy-tool")?.addEventListener("click", () => copyTool(slug, token, session));
 }
 

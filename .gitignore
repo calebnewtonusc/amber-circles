@@ -5,3 +5,5 @@ node_modules/
 .DS_Store
 .design-gate-url
 public/.design-gate-url
+ios/build/
+ios/*.xcodeproj/xcuserdata/

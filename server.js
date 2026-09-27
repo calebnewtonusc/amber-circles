@@ -886,8 +886,12 @@ app.get("/frame/:slug", async (c) => {
   if (!memberId)
     return c.text("This frame link expired. Reload the tool.", 403);
   const { rows } = await pool.query(
-    `select case when $3::boolean and m.is_owner and t.draft_html is not null then t.draft_html else t.html end as html
-       from tools t join members m on m.circle_id = t.circle_id where t.slug = $1 and m.id = $2`,
+    // In a group chat everyone can change things, so everyone can try a
+    // waiting change before it is kept.
+    `select case when $3::boolean and (m.is_owner or c.chat_invite_hash is not null) and t.draft_html is not null
+                 then t.draft_html else t.html end as html
+       from tools t join members m on m.circle_id = t.circle_id join circles c on c.id = t.circle_id
+      where t.slug = $1 and m.id = $2`,
     [slug, memberId, c.req.query("draft") === "1"],
   );
   if (!rows[0]) return c.text("Not found", 404);
