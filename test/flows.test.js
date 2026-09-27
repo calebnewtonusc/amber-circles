@@ -239,7 +239,8 @@ test("a stranger asks to join, the owner lets them in, and their link works", as
     await call(`/api/requests/${ruth.id}/approve`, { method: "POST", owner })
   ).json;
   assert.equal(approved.phone, "2535550101");
-  const token = new URL(approved.link).searchParams.get("m");
+  assert.ok(!new URL(approved.link).search, "the member token never rides in a query string, where edge logs keep it");
+  const token = new URLSearchParams(new URL(approved.link).hash.slice(1)).get("m");
   const opened = await call(`/api/run/${slug}`, { member: token });
   assert.equal(opened.status, 200);
   assert.equal(opened.json.me.name, "Ruth Miller");
@@ -310,4 +311,23 @@ test("presence: a member polling shows up as here now", async () => {
     true,
   );
   assert.equal(after.tools[0].here_now, 1);
+});
+
+test("people remove their own entries; only the owner removes anyone's", async () => {
+  const stan = (await call("/api/owners", { method: "POST", body: { name: "Stan" } })).json.key;
+  await call("/api/circles", { method: "POST", owner: stan, body: { name: "Class", members: [{ name: "Ruth" }, { name: "Harold" }] } });
+  const { circles } = (await call("/api/owner", { owner: stan })).json;
+  const { slug } = (await call("/api/tools", { method: "POST", owner: stan, body: { title: "P", circle: circles[0].id, html: page("x") } })).json;
+  const token = (name) => circles[0].members.find((m) => m.name === name).token;
+  const add = async (who, text) => (await call(`/api/run/${slug}/rpc`, { method: "POST", member: token(who), body: { op: "add", collection: "prayers", data: { text } } })).json.result.id;
+  const remove = (who, id) => call(`/api/run/${slug}/rpc`, { method: "POST", member: token(who), body: { op: "remove", collection: "prayers", id } });
+
+  const harolds = await add("Harold", "for Carol");
+  assert.equal((await remove("Ruth", harolds)).status, 403, "Ruth cannot delete Harold's prayer");
+  assert.equal((await remove("Harold", harolds)).status, 200, "Harold can delete his own");
+  const ruths = await add("Ruth", "for Dan");
+  assert.equal((await remove("Stan", ruths)).status, 200, "the owner can delete anyone's");
+  // Editing stays shared, so a sign-up slot one person made can be claimed by another.
+  const slot = await add("Harold", "bring rolls");
+  assert.equal((await call(`/api/run/${slug}/rpc`, { method: "POST", member: token("Ruth"), body: { op: "update", collection: "prayers", id: slot, data: { taken: "Ruth" } } })).status, 200);
 });

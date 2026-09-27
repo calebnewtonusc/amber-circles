@@ -192,7 +192,11 @@ async function render() {
   cleanupActive();
   // A private sign-in link carries the owner key once, then it is stored and
   // stripped from the address bar so it never lands in history or a screenshot.
-  const signIn = new URLSearchParams(location.search).get("owner");
+  // Secrets ride in the fragment, which browsers never send to the server,
+  // so they cannot land in an edge request log. The query form still works
+  // for links sent before 2026-09-27.
+  const fragment = new URLSearchParams(location.hash.slice(1));
+  const signIn = fragment.get("owner") || new URLSearchParams(location.search).get("owner");
   if (signIn) {
     store.set(OWNER_KEY, signIn);
     history.replaceState({}, "", location.pathname);
@@ -408,7 +412,7 @@ async function dashboard() {
             const circle = data.circles.find((entry) => entry.id === tool.circle_id);
             const size = circle?.members.length || 0;
             const token = ownerToken(tool.circle_id);
-            const open = `/t/${esc(tool.slug)}${token ? `?m=${encodeURIComponent(token)}` : ""}`;
+            const open = `/t/${esc(tool.slug)}${token ? `#m=${encodeURIComponent(token)}` : ""}`;
             return `
             <div class="ledger-row ledger-tools">
               <div><a class="title" href="/tools/${esc(tool.slug)}" data-link>${esc(tool.title)}</a><p class="sub">${esc(tool.description || "No description yet.")}</p></div>
@@ -626,7 +630,7 @@ async function sharePage(slug) {
     }
     const circle = data.circles.find((entry) => entry.id === tool.circle_id);
     const linkFor = (member) =>
-      `${data.base}/t/${tool.slug}?m=${encodeURIComponent(member.token)}`;
+      `${data.base}/t/${tool.slug}#m=${encodeURIComponent(member.token)}`;
     app.querySelector("main").innerHTML = `
       <a class="btn btn-ghost btn-sm" href="/" data-link>${icon("back", "icon-sm")} Tools</a>
       <div class="masthead mt-3"><div><p class="kicker">Share · ${esc(circle.name)}</p><h2>${esc(tool.title)}</h2>
@@ -730,7 +734,7 @@ async function connectPage() {
   const claudeCode = `claude mcp add --transport http amber ${mcp}`;
   const prompt =
     "Build an attendance tracker for my club and share it with my cabinet circle on Amber. Members check in at each meeting, and I can see who has missed the last three so I can reach out.";
-  const signInLink = `${base}/?owner=${encodeURIComponent(key)}`;
+  const signInLink = `${base}/#owner=${encodeURIComponent(key)}`;
   app.innerHTML = shell(
     "connect",
     `
@@ -845,7 +849,7 @@ function mountTool({ container, slug, token, session, draft = false, frameClass 
 
 async function runner(slug) {
   const params = new URLSearchParams(location.search);
-  const fromLink = params.get("m");
+  const fromLink = new URLSearchParams(location.hash.slice(1)).get("m") || params.get("m");
   if (fromLink) {
     store.set(memberKey(slug), fromLink);
     history.replaceState({}, "", `/t/${slug}`);
@@ -1102,7 +1106,7 @@ async function toolPage(slug) {
   const hereNow = circle.members.filter((member) => member.here_now && !member.is_owner).map((member) => member.name.split(" ")[0]);
   app.querySelector("main").innerHTML = `
     <div class="masthead"><div><p class="kicker">${esc(circle.name)}</p><h2>${esc(tool.title)}</h2></div>
-      <div class="row"><a class="btn" href="/t/${esc(slug)}?m=${encodeURIComponent(token)}">${icon("open", "icon-sm")} Full screen</a><a class="btn btn-primary" href="/share/${esc(slug)}" data-link>${icon("share", "icon-sm")} Send to ${esc(circle.name)}</a></div>
+      <div class="row"><a class="btn" href="/t/${esc(slug)}#m=${encodeURIComponent(token)}">${icon("open", "icon-sm")} Full screen</a><a class="btn btn-primary" href="/share/${esc(slug)}" data-link>${icon("share", "icon-sm")} Send to ${esc(circle.name)}</a></div>
     </div>
     <div class="workspace">
       <div class="phone" id="preview">${tool.has_draft ? '<p class="phone-label">The change, with your real data. Nobody else sees it yet.</p>' : '<p class="phone-label">What everyone sees right now</p>'}</div>

@@ -206,7 +206,10 @@ async function findCircle(owner, circleRef) {
   return rows[0];
 }
 
-async function publishTool(owner, { title, description = "", circle, html, request = "" }) {
+async function publishTool(
+  owner,
+  { title, description = "", circle, html, request = "" },
+) {
   const target = await findCircle(owner, circle);
   const source = requireText(html, "html", MAX_TOOL_HTML_BYTES);
   const id = newId("tool");
@@ -217,7 +220,16 @@ async function publishTool(owner, { title, description = "", circle, html, reque
     await client.query(
       `insert into tools (id, slug, owner_id, circle_id, title, description, html, request)
        values ($1, $2, $3, $4, $5, $6, $7, $8)`,
-      [id, slug, owner.id, target.id, requireText(title, "title", 80), String(description).slice(0, 500), source, String(request).slice(0, 4000)],
+      [
+        id,
+        slug,
+        owner.id,
+        target.id,
+        requireText(title, "title", 80),
+        String(description).slice(0, 500),
+        source,
+        String(request).slice(0, 4000),
+      ],
     );
     await client.query(
       "insert into tool_versions (tool_id, version, html, request) values ($1, 1, $2, $3)",
@@ -233,7 +245,11 @@ async function publishTool(owner, { title, description = "", circle, html, reque
   return { slug, circle: target.name };
 }
 
-async function updateTool(owner, slug, { html, title, description, request = "" }) {
+async function updateTool(
+  owner,
+  slug,
+  { html, title, description, request = "" },
+) {
   const client = await pool.connect();
   try {
     await client.query("begin");
@@ -254,10 +270,16 @@ async function updateTool(owner, slug, { html, title, description, request = "" 
         description ?? null,
       ],
     );
-    if (!rows[0]) throw new HttpError(404, "No tool with that link belongs to you.");
+    if (!rows[0])
+      throw new HttpError(404, "No tool with that link belongs to you.");
     await client.query(
       "insert into tool_versions (tool_id, version, html, request) values ($1, $2, $3, $4) on conflict do nothing",
-      [rows[0].id, rows[0].version, rows[0].html, String(request).slice(0, 4000)],
+      [
+        rows[0].id,
+        rows[0].version,
+        rows[0].html,
+        String(request).slice(0, 4000),
+      ],
     );
     await client.query("commit");
     return { slug: rows[0].slug, version: rows[0].version };
@@ -342,7 +364,9 @@ async function bridge(access, body) {
       // A fingerprint of the tool's shared data, polled by the frame so one
       // person's check-in shows up on everyone else's screen. The same poll is
       // the presence heartbeat.
-      await pool.query("update members set last_seen = now() where id = $1", [access.member_id]);
+      await pool.query("update members set last_seen = now() where id = $1", [
+        access.member_id,
+      ]);
       const {
         rows: [row],
       } = await pool.query(
@@ -416,10 +440,28 @@ async function bridge(access, body) {
       return { id: body.id };
     }
     case "remove": {
-      await pool.query(
-        "delete from records where tool_id = $1 and collection = $2 and id = $3",
-        [access.tool_id, collection, String(body.id)],
+      // Found by the commit security review, 2026-09-27: removal was only
+      // hidden in the tool's UI, so any member could delete anyone's entry
+      // from the browser console. People remove their own entries; the
+      // circle's owner can remove any. Editing stays shared, because a
+      // sign-up sheet needs people to claim slots someone else created.
+      const { rowCount } = await pool.query(
+        `delete from records
+          where tool_id = $1 and collection = $2 and id = $3
+            and ($5::boolean or author_id = $4)`,
+        [
+          access.tool_id,
+          collection,
+          String(body.id),
+          access.member_id,
+          Boolean(access.is_owner),
+        ],
       );
+      if (!rowCount)
+        throw new HttpError(
+          403,
+          "Only the person who added this, or the group's owner, can remove it.",
+        );
       return { id: body.id };
     }
     default:
@@ -865,11 +907,24 @@ app.delete("/api/owner", async (c) => {
 // data into one of their circles. The member link proves they can see it.
 app.post("/api/run/:slug/copy", async (c) => {
   const owner = await requireOwner(c);
-  const access = await memberForTool(c.req.param("slug"), c.req.header("x-amber-member"));
-  if (!access?.member_id) throw new HttpError(403, "You can only copy a tool you can open.");
+  const access = await memberForTool(
+    c.req.param("slug"),
+    c.req.header("x-amber-member"),
+  );
+  if (!access?.member_id)
+    throw new HttpError(403, "You can only copy a tool you can open.");
   const body = await c.req.json();
-  const { rows } = await pool.query("select title, description, html from tools where slug = $1", [c.req.param("slug")]);
-  const result = await publishTool(owner, { title: rows[0].title, description: rows[0].description, circle: body.circle, html: rows[0].html, request: `A copy of ${rows[0].title}` });
+  const { rows } = await pool.query(
+    "select title, description, html from tools where slug = $1",
+    [c.req.param("slug")],
+  );
+  const result = await publishTool(owner, {
+    title: rows[0].title,
+    description: rows[0].description,
+    circle: body.circle,
+    html: rows[0].html,
+    request: `A copy of ${rows[0].title}`,
+  });
   return c.json(result);
 });
 
@@ -883,7 +938,9 @@ const BUILDS_PER_HOUR = 12;
 const buildLog = new Map();
 function allowBuild(ownerId) {
   const now = Date.now();
-  const recent = (buildLog.get(ownerId) || []).filter((at) => now - at < 3600_000);
+  const recent = (buildLog.get(ownerId) || []).filter(
+    (at) => now - at < 3600_000,
+  );
   if (recent.length >= BUILDS_PER_HOUR) return false;
   recent.push(now);
   buildLog.set(ownerId, recent);
@@ -895,17 +952,35 @@ app.post("/api/build", async (c) => {
   const body = await c.req.json();
   const request = requireText(body.request, "what you want", 4000);
   const existing = body.slug
-    ? (await pool.query("select slug, title, html, circle_id from tools where owner_id = $1 and slug = $2", [owner.id, String(body.slug)])).rows[0]
+    ? (
+        await pool.query(
+          "select slug, title, html, circle_id from tools where owner_id = $1 and slug = $2",
+          [owner.id, String(body.slug)],
+        )
+      ).rows[0]
     : null;
-  if (body.slug && !existing) throw new HttpError(404, "No tool with that link belongs to you.");
+  if (body.slug && !existing)
+    throw new HttpError(404, "No tool with that link belongs to you.");
   const circle = existing
-    ? (await pool.query("select id, name from circles where id = $1", [existing.circle_id])).rows[0]
+    ? (
+        await pool.query("select id, name from circles where id = $1", [
+          existing.circle_id,
+        ])
+      ).rows[0]
     : await findCircle(owner, body.circle);
-  const { rows: people } = await pool.query("select name from members where circle_id = $1 order by is_owner desc, name", [circle.id]);
-  if (!allowBuild(owner.id)) throw new HttpError(429, "That is a lot of building for one hour. Take a break and try again in a little while.");
+  const { rows: people } = await pool.query(
+    "select name from members where circle_id = $1 order by is_owner desc, name",
+    [circle.id],
+  );
+  if (!allowBuild(owner.id))
+    throw new HttpError(
+      429,
+      "That is a lot of building for one hour. Take a break and try again in a little while.",
+    );
 
   return streamSSE(c, async (sse) => {
-    const send = (event, data) => sse.writeSSE({ event, data: JSON.stringify(data) });
+    const send = (event, data) =>
+      sse.writeSSE({ event, data: JSON.stringify(data) });
     try {
       const { html, usage } = await build({
         request,
@@ -916,33 +991,66 @@ app.post("/api/build", async (c) => {
       });
       // Token counts only, never the request text: the cost-per-build number
       // on the pitch deck has to come from real builds, not a guess.
-      console.log(JSON.stringify({ event: "build", input: usage.input_tokens, output: usage.output_tokens, edit: Boolean(existing) }));
+      console.log(
+        JSON.stringify({
+          event: "build",
+          input: usage.input_tokens,
+          output: usage.output_tokens,
+          edit: Boolean(existing),
+        }),
+      );
       if (existing) {
-        await pool.query("update tools set draft_html = $3, draft_request = $4 where owner_id = $1 and slug = $2", [owner.id, existing.slug, html, request]);
+        await pool.query(
+          "update tools set draft_html = $3, draft_request = $4 where owner_id = $1 and slug = $2",
+          [owner.id, existing.slug, html, request],
+        );
         await send("done", { slug: existing.slug, draft: true });
       } else {
-        const result = await publishTool(owner, { title: body.title || titleFrom(request), description: request.slice(0, 200), circle: circle.id, html, request });
+        const result = await publishTool(owner, {
+          title: body.title || titleFrom(request),
+          description: request.slice(0, 200),
+          circle: circle.id,
+          html,
+          request,
+        });
         await send("done", { slug: result.slug, version: 1 });
       }
     } catch (error) {
       if (!(error.status >= 400 && error.status < 600)) console.error(error);
-      await send("error", { message: error.status ? error.message : "Something went wrong while building. Try again." });
+      await send("error", {
+        message: error.status
+          ? error.message
+          : "Something went wrong while building. Try again.",
+      });
     }
   });
 });
 
 app.post("/api/tools/:slug/keep", async (c) => {
   const owner = await requireOwner(c);
-  const { rows } = await pool.query("select draft_html, draft_request from tools where owner_id = $1 and slug = $2", [owner.id, c.req.param("slug")]);
-  if (!rows[0]?.draft_html) throw new HttpError(404, "There is no change waiting. Ask for one first.");
-  const result = await updateTool(owner, c.req.param("slug"), { html: rows[0].draft_html, request: rows[0].draft_request || "" });
-  await pool.query("update tools set draft_html = null, draft_request = null where owner_id = $1 and slug = $2", [owner.id, c.req.param("slug")]);
+  const { rows } = await pool.query(
+    "select draft_html, draft_request from tools where owner_id = $1 and slug = $2",
+    [owner.id, c.req.param("slug")],
+  );
+  if (!rows[0]?.draft_html)
+    throw new HttpError(404, "There is no change waiting. Ask for one first.");
+  const result = await updateTool(owner, c.req.param("slug"), {
+    html: rows[0].draft_html,
+    request: rows[0].draft_request || "",
+  });
+  await pool.query(
+    "update tools set draft_html = null, draft_request = null where owner_id = $1 and slug = $2",
+    [owner.id, c.req.param("slug")],
+  );
   return c.json(result);
 });
 
 app.post("/api/tools/:slug/discard", async (c) => {
   const owner = await requireOwner(c);
-  await pool.query("update tools set draft_html = null, draft_request = null where owner_id = $1 and slug = $2", [owner.id, c.req.param("slug")]);
+  await pool.query(
+    "update tools set draft_html = null, draft_request = null where owner_id = $1 and slug = $2",
+    [owner.id, c.req.param("slug")],
+  );
   return c.json({ ok: true });
 });
 
@@ -966,7 +1074,12 @@ app.post("/api/tools/:slug/restore", async (c) => {
     [owner.id, c.req.param("slug"), Number(version)],
   );
   if (!rows[0]) throw new HttpError(404, "That version is not there any more.");
-  return c.json(await updateTool(owner, c.req.param("slug"), { html: rows[0].html, request: `Went back to version ${Number(version)}` }));
+  return c.json(
+    await updateTool(owner, c.req.param("slug"), {
+      html: rows[0].html,
+      request: `Went back to version ${Number(version)}`,
+    }),
+  );
 });
 
 // Guessed, never measured: a real circle is a few dozen people, so fifty
@@ -975,16 +1088,30 @@ const MAX_PENDING_REQUESTS = 50;
 
 app.post("/api/run/:slug/ask", async (c) => {
   const body = await c.req.json().catch(() => ({}));
-  const { rows } = await pool.query("select id from tools where slug = $1", [c.req.param("slug")]);
+  const { rows } = await pool.query("select id from tools where slug = $1", [
+    c.req.param("slug"),
+  ]);
   if (!rows[0]) throw new HttpError(404, "This tool does not exist.");
-  const { rows: [{ count }] } = await pool.query(
+  const {
+    rows: [{ count }],
+  } = await pool.query(
     "select count(*)::int as count from access_requests where tool_id = $1 and status = 'pending'",
     [rows[0].id],
   );
-  if (count >= MAX_PENDING_REQUESTS) throw new HttpError(429, "There are already a lot of people waiting. Text the owner directly.");
+  if (count >= MAX_PENDING_REQUESTS)
+    throw new HttpError(
+      429,
+      "There are already a lot of people waiting. Text the owner directly.",
+    );
   await pool.query(
     "insert into access_requests (id, tool_id, name, phone, note) values ($1, $2, $3, $4, $5)",
-    [newId("req"), rows[0].id, requireText(body.name, "your name", 80), normalizePhone(body.phone), String(body.note || "").slice(0, 280)],
+    [
+      newId("req"),
+      rows[0].id,
+      requireText(body.name, "your name", 80),
+      normalizePhone(body.phone),
+      String(body.note || "").slice(0, 280),
+    ],
   );
   return c.json({ ok: true });
 });
@@ -1003,7 +1130,8 @@ app.get("/api/requests", async (c) => {
 app.post("/api/requests/:id/:decision", async (c) => {
   const owner = await requireOwner(c);
   const decision = c.req.param("decision");
-  if (!["approve", "decline"].includes(decision)) throw new HttpError(404, "Not a choice.");
+  if (!["approve", "decline"].includes(decision))
+    throw new HttpError(404, "Not a choice.");
   const client = await pool.connect();
   try {
     await client.query("begin");
@@ -1015,14 +1143,27 @@ app.post("/api/requests/:id/:decision", async (c) => {
     );
     if (!rows[0]) throw new HttpError(404, "That request was already handled.");
     const ask = rows[0];
-    await client.query("update access_requests set status = $2 where id = $1", [ask.id, decision === "approve" ? "approved" : "declined"]);
+    await client.query("update access_requests set status = $2 where id = $1", [
+      ask.id,
+      decision === "approve" ? "approved" : "declined",
+    ]);
     let link = null;
     if (decision === "approve") {
-      const member = await addMember(client, ask.circle_id, { name: ask.name, phone: ask.phone });
-      link = `${publicUrl(c)}/t/${ask.slug}?m=${encodeURIComponent(member.token)}`;
+      const member = await addMember(client, ask.circle_id, {
+        name: ask.name,
+        phone: ask.phone,
+      });
+      link = `${publicUrl(c)}/t/${ask.slug}#m=${encodeURIComponent(member.token)}`;
     }
     await client.query("commit");
-    return c.json({ ok: true, name: ask.name, phone: ask.phone, title: ask.title, circle: ask.circle_name, link });
+    return c.json({
+      ok: true,
+      name: ask.name,
+      phone: ask.phone,
+      title: ask.title,
+      circle: ask.circle_name,
+      link,
+    });
   } catch (error) {
     await client.query("rollback");
     throw error;

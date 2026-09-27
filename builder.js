@@ -43,7 +43,7 @@ Behaviour
 - Anything only the owner should do (delete other people's entries, reset, close a sign-up), hide unless (await amber.me()).isOwner.
 - Use the group's real names from amber.people() wherever a person appears. Never ask someone to type their own name; you already know it from amber.me().
 - Call amber.onChange to redraw when someone else changes data.
-- Deleting asks for confirmation first.
+- Deleting asks for confirmation first. People can only remove entries they added themselves (compare author.id with amber.me().id); the owner can remove any. Only show a Remove button where it will work.
 
 Look
 - Match Amber: page #f3f2f2, cards #f8f7f5 with a 1px border rgba(32,31,29,0.14), text #201f1d, muted #605d5d, one accent #7d5411 used for the main action and headings accents, 4px corners, no gradients, no drop shadows. Headings in "Newsreader" (serif), everything else in "Outfit", both from Google Fonts. Buttons are a 1px #7d5411 outline with #5a3b0a text on #fff3e4; the single most important action on the screen may be solid #7d5411 with white text.
