@@ -530,11 +530,12 @@ function personRow(member, { link, message, removable }) {
   return `
     <div class="person">
       <div class="avatar" aria-hidden="true">${esc(initials(member.name))}</div>
-      <div class="who"><b>${esc(member.name)}${member.is_owner ? ' <span class="tag tag-neutral tag-xs">you</span>' : ""}</b><span>${esc(formatPhone(member.phone) || "no phone, copy the link instead")}</span></div>
-      <span class="spacer"></span>
-      ${link ? `<button class="btn btn-sm btn-ghost" data-copy="${esc(link)}" aria-label="Copy ${esc(member.name)}'s link">${icon("copy", "icon-sm")} Copy link</button>` : ""}
-      ${sms && !member.is_owner ? `<a class="btn btn-sm" href="${esc(sms)}">${icon("message", "icon-sm")} Text</a>` : ""}
-      ${removable && !member.is_owner ? `<button class="btn btn-sm btn-ghost" data-remove="${esc(member.id)}" aria-label="Remove ${esc(member.name)}">${icon("trash", "icon-sm")}</button>` : ""}
+      <div class="who"><b>${esc(member.name)}${member.is_owner ? ' <span class="tag tag-neutral tag-xs">you</span>' : ""}</b><span>${esc(formatPhone(member.phone) || "No phone number yet")}</span></div>
+      <div class="person-actions">
+        ${sms && !member.is_owner ? `<a class="btn btn-sm btn-primary" href="${esc(sms)}">${icon("message", "icon-sm")} Text ${esc(member.name.split(" ")[0])}</a>` : ""}
+        ${link ? `<button class="btn btn-sm btn-ghost" data-copy="${esc(link)}" aria-label="Copy ${esc(member.name)}'s link">${icon("copy", "icon-sm")} Copy link</button>` : ""}
+        ${removable && !member.is_owner ? `<button class="btn btn-sm btn-ghost" data-remove="${esc(member.id)}" aria-label="Remove ${esc(member.name)}">${icon("trash", "icon-sm")}</button>` : ""}
+      </div>
     </div>`;
 }
 
@@ -653,9 +654,10 @@ async function sharePage(slug) {
     app.querySelector("main").innerHTML = `
       <a class="btn btn-ghost btn-sm" href="/" data-link>${icon("back", "icon-sm")} Tools</a>
       <div class="masthead mt-3"><div><p class="kicker">Share · ${esc(circle.name)}</p><h2>${esc(tool.title)}</h2>
-      <p class="lede mt-1">Everyone gets their own link, so the tool knows who is checking in. Anyone outside ${esc(circle.name)} who opens the tool is turned away.</p></div></div>
+      <p class="lede mt-1">Tap Text next to each person. Their phone gets their own link, and the tool will know who they are. Nobody outside ${esc(circle.name)} can open it.</p></div></div>
       <div class="card">
         <div class="people">${circle.members
+          .filter((member) => !member.is_owner)
           .map((member) =>
             personRow(member, {
               link: linkFor(member),

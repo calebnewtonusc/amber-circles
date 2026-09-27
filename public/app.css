@@ -1074,3 +1074,13 @@ body { font-size: 1rem; }
 .welcome p { font-size: 16px; }
 .specimen li { font-size: 16px; }
 .input, textarea.input, select.input { font-size: 17px; }
+
+/* ---------- people rows that fit a phone ---------- */
+.person { flex-wrap: wrap; }
+.person .who { flex: 1 1 160px; }
+.person-actions { display: flex; gap: var(--space-2); align-items: center; margin-left: auto; }
+.person-actions .btn { white-space: nowrap; }
+@media (max-width: 520px) {
+  .person-actions { width: 100%; margin-left: 46px; }
+}
+.card > .people { border-top: 0; }
