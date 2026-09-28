@@ -171,7 +171,11 @@ struct HoldToTalk: View {
                         pressing = false
                         Task {
                             let heard = await listener.stop()
-                            if !heard.isEmpty { onHeard(heard) }
+                            store.speaker.listening = false
+                            // The live bubble stays until the message takes
+                            // its place, so letting go does not bounce it in
+                            // a second time.
+                            if heard.isEmpty { store.liveSpeech = nil } else { onHeard(heard) }
                         }
                     }
             )
@@ -179,7 +183,7 @@ struct HoldToTalk: View {
                 if listener.isListening { store.liveSpeech = words }
             }
             .onChange(of: listener.isListening) { _, on in
-                if on { store.liveSpeech = "" } else { store.liveSpeech = nil }
+                if on { store.speaker.stop(); store.speaker.listening = true; store.liveSpeech = "" }
             }
             .accessibilityLabel(label)
             .accessibilityHint("Hold, say it, then let go")
@@ -198,17 +202,23 @@ final class Speaker: NSObject, ObservableObject, AVAudioPlayerDelegate {
     /// to save screen space").
     let isOn = true
     @Published var isSpeaking = false
+    /// True while someone holds the talk pill. Speaking switches the audio
+    /// session to playback, which cut the microphone off mid-sentence every
+    /// time a build narrated (Caleb, 2026-09-27: long messages lost their
+    /// start, and talking mid-build did not work). Amber stays quiet then;
+    /// its words still arrive as texts.
+    var listening = false
     private var player: AVAudioPlayer?
 
     func say(_ text: String, token: String) async {
-        guard isOn, !text.isEmpty else { return }
+        guard isOn, !text.isEmpty, !listening else { return }
         var request = URLRequest(url: API.base.appendingPathComponent("api/speak"))
         request.httpMethod = "POST"
         request.setValue("application/json", forHTTPHeaderField: "content-type")
         request.setValue(token, forHTTPHeaderField: "x-amber-chat")
         request.httpBody = try? JSONSerialization.data(withJSONObject: ["text": String(text.prefix(700))])
         guard let (data, response) = try? await URLSession.shared.data(for: request),
-              (response as? HTTPURLResponse)?.statusCode == 200 else { return }
+              (response as? HTTPURLResponse)?.statusCode == 200, !listening else { return }
         do {
             // Plain playback, not play-and-record: iOS refuses play-and-record
             // until the microphone is allowed, so someone who only typed never

@@ -266,7 +266,10 @@ export async function converse({ db, chat, speaker, focusSlug, text, personMemor
       // is refused unless a plan was read back and confirmed, or the person
       // literally said to just build it.
       const plan = await db.plan();
-      const saidJustBuild = /\b(just (build|make|do) it|skip the questions|go ahead and (build|make))\b/i.test(text);
+      // "Don't ask questions, just make a page" is as clear as "just build
+      // it"; the narrower pattern made Amber ask anyway (Caleb, 2026-09-27).
+      const saidJustBuild =
+        /\b(just (build|make|do|create)\b|skip (the )?questions|no questions|(don'?t|do not) ask|go ahead and (build|make))/i.test(text);
       const saidYes = /\b(yes|yeah|yep|sure|go ahead|do it|sounds good|perfect|make it|build it|please)\b/i.test(text);
       if (!(just_build && saidJustBuild) && !(plan && saidYes)) {
         return {

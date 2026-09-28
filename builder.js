@@ -253,10 +253,14 @@ export async function describeChange({ before, after, request }) {
 // What the builder is adding right now, in words a person would use, from
 // the newest heading, button or field in the half-written page.
 export function narrate(html) {
+  // Only labels with real words: a button whose text is whitespace or an icon
+  // came out as 'Adding the "" button' (Caleb's screenshot, 2026-09-27).
   const found = [
     ...html.matchAll(/<(h1|h2|h3|button|label)[^>]*>([^<]{2,60})</gi),
     ...html.matchAll(/placeholder="([^"]{2,60})"/gi),
-  ].sort((a, b) => a.index - b.index);
+  ]
+    .filter((m) => /[A-Za-z0-9]{2}/.test(m[m.length - 1]))
+    .sort((a, b) => a.index - b.index);
   const last = found.at(-1);
   if (!last) return html.includes("<style") && !html.includes("<body") ? "Choosing the look" : "Setting up the page";
   if (last.length === 2) return `Adding a box for "${last[1].trim()}"`;

@@ -58,6 +58,9 @@ struct Turn: Identifiable, Equatable, Codable {
     var fresh = false
     /// A project card in the home chat, by draft key or app slug.
     var project: String? = nil
+    /// Already on screen as the live transcript, so it takes that bubble's
+    /// place without animating in again.
+    var settled = false
 }
 
 /// What is on this phone and not yet in the cloud: the conversation, apps not
@@ -382,8 +385,11 @@ final class ChatStore: ObservableObject {
         let words = text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !words.isEmpty else { return }
         error = nil
-        withAnimation(.reveal) {
-            talk[slug, default: []].append(Turn(text: words, mine: true))
+        if liveSpeech != nil {
+            talk[slug, default: []].append(Turn(text: words, mine: true, settled: true))
+            liveSpeech = nil
+        } else {
+            withAnimation(.reveal) { talk[slug, default: []].append(Turn(text: words, mine: true)) }
         }
         do {
             if session == nil {
@@ -529,8 +535,10 @@ final class ChatStore: ObservableObject {
             // 2026-09-27: "a seamless transition when you switch to being on
             // a project").
             let draft = newDraft(title: "New project")
+            let spoken = liveSpeech != nil
+            talk["", default: []].append(Turn(text: words, mine: true, settled: spoken))
+            liveSpeech = nil
             withAnimation(.messageIn) {
-                talk["", default: []].append(Turn(text: words, mine: true))
                 talk["", default: []].append(Turn(text: "", mine: false, project: draft.id))
             }
             try? await Task.sleep(for: .milliseconds(700))

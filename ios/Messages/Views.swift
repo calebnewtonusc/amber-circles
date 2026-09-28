@@ -298,7 +298,7 @@ struct HomeView: View {
                                 ProjectCard(key: key).transition(.incoming(mine: false))
                             } else {
                                 Bubble(text: turn.text, mine: turn.mine, who: turn.who, typing: turn.fresh)
-                                    .transition(.incoming(mine: turn.mine))
+                                    .transition(turn.settled ? .identity : .incoming(mine: turn.mine))
                             }
                         }
                         if let live = store.liveSpeech, store.route == .home { Bubble(text: live, mine: true, live: true) }
@@ -441,7 +441,7 @@ struct DraftView: View {
                     VStack(alignment: .leading, spacing: 12) {
                         ForEach(store.talk[key] ?? []) { turn in
                             Bubble(text: turn.text, mine: turn.mine, who: turn.who, typing: turn.fresh)
-                                .transition(.incoming(mine: turn.mine))
+                                .transition(turn.settled ? .identity : .incoming(mine: turn.mine))
                         }
                         if let live = store.liveSpeech { Bubble(text: live, mine: true, live: true) }
                         Color.clear.frame(height: 12).id("end")
@@ -687,7 +687,7 @@ struct ToolView: View {
         VStack(alignment: .leading, spacing: 10) {
             ForEach(store.talk[slug] ?? []) { turn in
                 Bubble(text: turn.text, mine: turn.mine, who: turn.who, typing: turn.fresh)
-                    .transition(.incoming(mine: turn.mine))
+                    .transition(turn.settled ? .identity : .incoming(mine: turn.mine))
             }
             if let live = store.liveSpeech {
                 Bubble(text: live, mine: true, live: true)
@@ -982,6 +982,7 @@ struct TalkBar: View {
     private func send(_ text: String) {
         if let pin {
             let words = text.trimmingCharacters(in: .whitespacesAndNewlines)
+            store.liveSpeech = nil
             guard !words.isEmpty else { return }
             store.pinTarget = nil
             Task {
