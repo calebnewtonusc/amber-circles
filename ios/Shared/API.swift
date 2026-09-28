@@ -122,6 +122,34 @@ struct Note: Codable, Identifiable, Hashable {
     /// Set on a reply: the comment it answers.
     var parent_id: String? = nil
     var resolved_at: String? = nil
+    /// Set on a pinned comment: the spot on the page it is about.
+    var anchor: PinAnchor? = nil
+}
+
+/// One thing that happened to an app: made, edited, published, shared or
+/// put back.
+struct ActivityItem: Codable, Identifiable, Hashable {
+    let id: String
+    let kind: String
+    let text: String
+    let version: Int?
+    let created_at: String
+    let name: String?
+}
+
+struct ActivityList: Codable { let activity: [ActivityItem] }
+
+/// Where a pinned comment sits: the element it is about, found again by its
+/// selector, and the spot on it as a fraction of its width and height, so the
+/// pin follows the element when the layout changes (Caleb, 2026-09-27: pins
+/// stick to the element, and a comment whose element is gone resolves itself).
+struct PinAnchor: Codable, Hashable {
+    let selector: String
+    let fx: Double
+    let fy: Double
+    let label: String
+
+    var body: [String: Any] { ["selector": selector, "fx": fx, "fy": fy, "label": label] }
 }
 
 struct Version: Codable, Identifiable, Hashable {

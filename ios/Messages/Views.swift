@@ -49,10 +49,25 @@ struct RevealShape: Shape {
     }
 }
 
-private struct RevealMask: ViewModifier {
+private struct RevealMask: ViewModifier, Animatable {
     let from: CGRect
-    let progress: CGFloat
-    func body(content: Content) -> some View { content.clipShape(RevealShape(from: from, progress: progress)) }
+    var progress: CGFloat
+    var animatableData: CGFloat {
+        get { progress }
+        set { progress = newValue }
+    }
+    // One white card with the row's outline grows and shrinks; the words
+    // inside only show once it is nearly open, and leave first on the way
+    // back. Clipping the words as the card shrank cut through the middle of
+    // a message (Caleb's screenshot, 2026-09-27: "such a bad transition back").
+    func body(content: Content) -> some View {
+        let shape = RevealShape(from: from, progress: progress)
+        content
+            .opacity(Double(max(0, (progress - 0.6) / 0.4)))
+            .background(shape.fill(Amber.sheet))
+            .clipShape(shape)
+            .overlay(shape.stroke(Amber.hairline, lineWidth: 1.5))
+    }
 }
 
 extension Animation {
@@ -109,8 +124,12 @@ struct RootView: View {
                 // same amber/nav bar, that shouldn't have to reanimate").
                 VStack(spacing: 0) {
                     ZStack {
+                        // Home never leaves. Rebuilt on the way back, every row
+                        // popped in at once (Caleb, 2026-09-27: "the new project
+                        // text and little star appear super abruptly").
+                        HomeView().zIndex(0)
                         switch store.route {
-                        case .home: HomeView().transition(.identity).zIndex(0)
+                        case .home: EmptyView()
                         case .tool(let slug):
                             ToolView(slug: slug, speaker: store.speaker)
                                 .transition(.reveal(from: store.revealFrom)).zIndex(1)
@@ -312,7 +331,7 @@ struct HomeView: View {
                     DraftRow(draft: draft, building: store.changing[draft.id] != nil, doing: store.doing[draft.id])
                 }
                 .buttonStyle(.plain)
-                .onGeometryChange(for: CGRect.self) { $0.frame(in: .named("stage")) } action: { frames[draft.id] = $0 }
+                .onGeometryChange(for: CGRect.self) { $0.frame(in: .named("stage")) } action: { frames[draft.id] = $0; store.rowFrames[draft.id] = $0 }
                 .transition(.blurReplace)
             }
             ForEach(store.overview?.tools ?? []) { tool in
@@ -320,7 +339,7 @@ struct HomeView: View {
                     AppRow(tool: tool, unshared: store.unpublished.contains(tool.slug))
                 }
                 .buttonStyle(.plain)
-                .onGeometryChange(for: CGRect.self) { $0.frame(in: .named("stage")) } action: { frames[tool.slug] = $0 }
+                .onGeometryChange(for: CGRect.self) { $0.frame(in: .named("stage")) } action: { frames[tool.slug] = $0; store.rowFrames[tool.slug] = $0 }
             }
             if store.loading && (store.overview?.tools ?? []).isEmpty {
                 ProgressView().frame(maxWidth: .infinity, minHeight: 60)
@@ -448,7 +467,7 @@ struct DraftView: View {
                 }
             }
         }
-        .background(Amber.paper.ignoresSafeArea())
+        .background(Amber.sheet)
     }
 }
 
@@ -551,6 +570,7 @@ struct ToolView: View {
     @State private var explanation: String?
     @State private var versions: [Version] = []
     @State private var notes: [Note] = []
+    @State private var activity: [ActivityItem] = []
     @State private var request = ""
     @State private var showing: URL?
     @State private var copied = false
@@ -570,8 +590,8 @@ struct ToolView: View {
             VStack(alignment: .leading, spacing: 12) {
                 if store.tool(slug) != nil {
                     VStack(spacing: 0) {
-                        LivePanel(slug: slug, expanded: $previewing)
-                        CommentsTray(slug: slug, notes: notes) { await load() }
+                        LivePanel(slug: slug, expanded: $previewing, pinsJSON: pinsJSON, onPin: handlePin)
+                        ActivityTray(slug: slug, notes: notes, activity: activity) { await load() }
                             .padding(.horizontal, 12)
                             .zIndex(-1)
                     }
@@ -607,9 +627,10 @@ struct ToolView: View {
                 }
             }
         }
-        // Only the container edge: ignoring the keyboard's safe area too is
-        // what left the talk bar hidden under the keyboard.
-        .background(Amber.paper.ignoresSafeArea())
+        // A project is the row's white card grown to fill the space between
+        // the bars, and it stays white inside (Caleb, 2026-09-27).
+        .background(Amber.sheet)
+        .onChange(of: store.notesTick) { _, _ in Task { await load() } }
         .task(id: slug) {
             await load()
             await store.loadTalk(slug)
@@ -683,13 +704,67 @@ struct ToolView: View {
         .animation(.messageIn, value: store.talk[slug]?.count ?? 0)
     }
 
+    /// Open pinned comments, as the preview's pin layer draws them.
+    private var pinsJSON: String {
+        let open = notes.filter { $0.parent_id == nil && $0.resolved_at == nil && $0.anchor != nil }
+        let names = Set(notes.compactMap(\.name))
+        let list: [[String: Any]] = open.compactMap { note in
+            guard let anchor = note.anchor else { return nil }
+            let name = note.name ?? "Someone"
+            return [
+                "id": note.id, "selector": anchor.selector, "fx": anchor.fx, "fy": anchor.fy,
+                "letter": PersonMark.letter(name, among: names), "color": PersonMark.hex(name),
+                "name": name, "text": note.text,
+                "replies": notes.filter { $0.parent_id == note.id }.map { ["name": $0.name ?? "Someone", "text": $0.text] },
+            ]
+        }
+        let data = (try? JSONSerialization.data(withJSONObject: list)) ?? Data("[]".utf8)
+        return String(data: data, encoding: .utf8) ?? "[]"
+    }
+
+    /// A double tap wakes Amber with the spot attached; the blob's own card
+    /// replies and resolves; a pin whose element is gone resolves itself.
+    private func handlePin(_ event: PinEvent) {
+        guard let token = store.session?.token else { return }
+        switch event {
+        case .drop(let anchor):
+            UIImpactFeedbackGenerator(style: .soft).impactOccurred()
+            store.pinTarget = PinDrop(slug: slug, anchor: anchor)
+            store.host?.expand()
+        case .resolve(let id):
+            Task { await resolveNotes([id], token: token) }
+        case .missing(let ids):
+            Task { await resolveNotes(ids, token: token) }
+        case .reply(let id, let text):
+            Task {
+                struct Made: Decodable { let id: String }
+                let _: Made? = try? await API.call("api/tools/\(slug)/notes", method: "POST", body: ["text": text, "parent": id], chat: token)
+                await load()
+            }
+        }
+    }
+
+    private func resolveNotes(_ ids: [String], token: String) async {
+        struct Done: Decodable { let ok: Bool }
+        await withTaskGroup(of: Void.self) { group in
+            for id in ids {
+                group.addTask {
+                    let _: Done? = try? await API.call("api/tools/\(slug)/notes/\(id)/resolve", method: "POST", body: ["resolved": true], chat: token)
+                }
+            }
+        }
+        await load()
+    }
+
     private func load() async {
         guard let token = store.session?.token else { return }
         async let versionList: Versions = API.call("api/tools/\(slug)/versions", chat: token)
         async let noteList: Notes = API.call("api/tools/\(slug)/notes", chat: token)
+        async let activityList: ActivityList = API.call("api/tools/\(slug)/activity", chat: token)
         do {
             versions = try await versionList.versions
             notes = try await noteList.notes
+            activity = try await activityList.activity
         } catch { store.error = error.localizedDescription }
         if explanation == nil {
             do {
@@ -814,10 +889,39 @@ struct TalkBar: View {
     @EnvironmentObject var store: ChatStore
     @Environment(\.titles) private var titles
     @State private var request = ""
+    @State private var pinMode: PinMode = .comment
     @FocusState private var focused: Bool
+
+    /// The double-tapped spot, while this app is open.
+    private var pin: PinDrop? {
+        guard let pin = store.pinTarget, store.route == .tool(pin.slug) else { return nil }
+        return pin
+    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
+            if let pin {
+                VStack(alignment: .leading, spacing: 8) {
+                    HStack(spacing: 8) {
+                        Image(systemName: "mappin.circle.fill").font(.system(size: 16)).foregroundStyle(Amber.amber)
+                        Text("On \(pin.anchor.label)").font(Amber.font(15, .bold)).foregroundStyle(Amber.ink).lineLimit(1)
+                        Spacer(minLength: 4)
+                        Button { store.pinTarget = nil } label: {
+                            Image(systemName: "xmark").font(.system(size: 12, weight: .bold)).foregroundStyle(Amber.muted)
+                                .frame(width: 30, height: 30)
+                        }
+                        .accessibilityLabel("Drop the pin")
+                    }
+                    Picker("What to do", selection: $pinMode) {
+                        Text("Comment here").tag(PinMode.comment)
+                        Text("Change it").tag(PinMode.change)
+                    }
+                    .pickerStyle(.segmented)
+                }
+                .padding(12)
+                .background(RoundedRectangle(cornerRadius: 14, style: .continuous).fill(Amber.amberSoft))
+                .transition(.blurReplace)
+            }
             // The logo sits with the thing it names, not repeated at the top.
             HStack(spacing: 12) {
                 EggSlot(rank: 5).frame(width: 30, height: 34)
@@ -842,9 +946,31 @@ struct TalkBar: View {
         .padding(16)
         .background(Amber.paper)
         .overlay(Rectangle().fill(Amber.hairline).frame(height: 1), alignment: .top)
+        .animation(.reveal, value: store.pinTarget)
+        // Mic and box both ready: the box takes focus, and holding the pill
+        // talks about the same spot.
+        .onChange(of: store.pinTarget) { _, pin in
+            if pin != nil { pinMode = .comment; focused = true }
+        }
     }
 
     private func send(_ text: String) {
+        if let pin {
+            let words = text.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !words.isEmpty else { return }
+            store.pinTarget = nil
+            Task {
+                switch pinMode {
+                case .comment:
+                    await store.dropComment(pin, words)
+                case .change:
+                    // Named precisely so the builder patches that one element.
+                    await store.say(pin.slug, "Change only \(pin.anchor.label) (CSS selector \(pin.anchor.selector)) and leave everything else exactly as it is: \(words)",
+                                    open: { store.host?.openInRealSafari($0) })
+                }
+            }
+            return
+        }
         Task {
             switch store.route {
             case .home: await store.homeSay(text)
@@ -858,10 +984,13 @@ struct TalkBar: View {
 /// Comments, tucked under the preview as part of it, so they never read as
 /// messages in the conversation. They work like Google Docs: reply to one,
 /// resolve it when it is handled (Caleb, 2026-09-27).
-struct CommentsTray: View {
+/// Under the preview: open comments and everything that happened to the app,
+/// in order. Resolved comments leave it (Caleb, 2026-09-27).
+struct ActivityTray: View {
     @EnvironmentObject var store: ChatStore
     let slug: String
     let notes: [Note]
+    let activity: [ActivityItem]
     let reload: () async -> Void
     @State private var open = false
     @State private var text = ""
@@ -875,10 +1004,15 @@ struct CommentsTray: View {
         VStack(alignment: .leading, spacing: 0) {
             Button { withAnimation(.reveal) { open.toggle() } } label: {
                 HStack(spacing: 8) {
-                    Image(systemName: "text.bubble").font(.system(size: 13, weight: .semibold)).foregroundStyle(Amber.amber)
-                    Text(threads.isEmpty ? "Comment" : "\(threads.count) \(threads.count == 1 ? "comment" : "comments")")
-                        .font(Amber.font(15, .bold)).foregroundStyle(Amber.ink)
+                    Image(systemName: "clock.arrow.circlepath").font(.system(size: 13, weight: .semibold)).foregroundStyle(Amber.amber)
+                    Text("Activity").font(Amber.font(15, .bold)).foregroundStyle(Amber.ink)
+                    if !threads.isEmpty {
+                        Text("\(threads.count) open \(threads.count == 1 ? "comment" : "comments")")
+                            .font(Amber.font(14)).foregroundStyle(Amber.muted)
+                    }
                     Spacer()
+                    Image(systemName: "chevron.down").font(.system(size: 12, weight: .bold)).foregroundStyle(Amber.muted)
+                        .rotationEffect(.degrees(open ? 180 : 0))
                 }
                 .padding(.horizontal, 14).padding(.top, 6)
                 .frame(height: 46)
@@ -888,11 +1022,17 @@ struct CommentsTray: View {
             if open {
                 ScrollView {
                     VStack(alignment: .leading, spacing: 8) {
-                        ForEach(threads) { thread in card(thread) }
+                        ForEach(timeline) { entry in
+                            switch entry {
+                            case .comment(let thread): card(thread)
+                            case .event(let item): eventRow(item)
+                            }
+                        }
                         composer
                     }
                     .padding(.horizontal, 10).padding(.bottom, 10)
                 }
+                .defaultScrollAnchor(.bottom)
                 .frame(maxHeight: 300)
                 .fixedSize(horizontal: false, vertical: true)
             }
@@ -902,10 +1042,49 @@ struct CommentsTray: View {
         .overlay(UnevenRoundedRectangle(bottomLeadingRadius: 14, bottomTrailingRadius: 14, style: .continuous).strokeBorder(Amber.hairline, lineWidth: 1))
     }
 
+    private enum Entry: Identifiable {
+        case comment(Note)
+        case event(ActivityItem)
+        var id: String { switch self { case .comment(let n): "n-\(n.id)"; case .event(let a): "a-\(a.id)" } }
+        var at: String { switch self { case .comment(let n): n.created_at; case .event(let a): a.created_at } }
+    }
+
+    /// Comments and events in the order they happened, newest at the bottom.
+    private var timeline: [Entry] {
+        (threads.map(Entry.comment) + activity.map(Entry.event)).sorted { $0.at < $1.at }
+    }
+
+    private func eventRow(_ item: ActivityItem) -> some View {
+        let who = item.name ?? "Someone"
+        let (icon, line): (String, String) = switch item.kind {
+        case "made": ("sparkles", "\(who) made it")
+        case "edited": ("pencil", item.text.isEmpty ? "\(who) edited it" : "\(who) edited: \(item.text)")
+        case "published": ("globe", "\(who) published version \(item.version ?? 0) to the site")
+        case "shared": ("bubble.left.fill", "\(who) sent it to the chat")
+        case "declined": ("arrow.uturn.backward", "\(who) put back: \(item.text)")
+        default: ("circle", "\(who): \(item.text)")
+        }
+        return HStack(alignment: .top, spacing: 10) {
+            Image(systemName: icon).font(.system(size: 12, weight: .semibold))
+                .foregroundStyle(item.kind == "published" ? Amber.amber : Amber.muted)
+                .frame(width: 18).padding(.top, 2)
+            Text(line).font(Amber.font(14)).foregroundStyle(Amber.body).fixedSize(horizontal: false, vertical: true)
+            Spacer(minLength: 4)
+            Text(timeAgo(item.created_at)).font(Amber.font(12)).foregroundStyle(Amber.muted)
+        }
+        .padding(.horizontal, 6).padding(.vertical, 4)
+    }
+
     private func card(_ thread: Note) -> some View {
-        VStack(alignment: .leading, spacing: 8) {
+        let name = thread.name ?? "Someone"
+        return VStack(alignment: .leading, spacing: 8) {
             HStack(spacing: 6) {
-                Text(thread.name ?? "Someone").font(Amber.font(14, .bold)).foregroundStyle(Amber.ink)
+                Text(PersonMark.letter(name, among: Set(notes.compactMap(\.name))))
+                    .font(.system(size: 11, weight: .bold)).foregroundStyle(PersonMark.color(name))
+                    .frame(width: 22, height: 22)
+                    .background(Circle().fill(PersonMark.color(name).opacity(0.22)))
+                    .overlay(Circle().strokeBorder(PersonMark.color(name), lineWidth: 1.5))
+                Text(name).font(Amber.font(14, .bold)).foregroundStyle(Amber.ink)
                 Text(timeAgo(thread.created_at)).font(Amber.font(13)).foregroundStyle(Amber.muted)
                 Spacer()
                 Button { Task { await resolve(thread) } } label: {
@@ -913,6 +1092,9 @@ struct CommentsTray: View {
                         .frame(width: 32, height: 32).background(Circle().fill(Amber.amberSoft))
                 }
                 .accessibilityLabel("Resolve")
+            }
+            if let anchor = thread.anchor {
+                Text("On \(anchor.label)").font(Amber.font(13)).foregroundStyle(Amber.muted)
             }
             Text(thread.text).font(Amber.font(16)).foregroundStyle(Amber.ink).fixedSize(horizontal: false, vertical: true)
             ForEach(replies(thread.id)) { reply in
@@ -1105,7 +1287,7 @@ struct TopBar: View {
     var body: some View {
         HStack(spacing: 12) {
             if store.route != .home {
-                Button { store.host?.view.endEditing(true); withAnimation(.reveal) { store.route = .home } } label: {
+                Button { store.goHome() } label: {
                     Image(systemName: "chevron.left").font(.system(size: 16, weight: .bold)).foregroundStyle(Amber.ink)
                         .frame(width: 36, height: 36).background(Circle().fill(Amber.wash))
                 }

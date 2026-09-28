@@ -73,10 +73,47 @@ final class ChatStore: ObservableObject {
     @Published var error: String?
     @Published var building: BuildState?
     @Published var route: Route = .home { didSet { saveLocal() } }
+    /// A double tap in the preview, waiting for words.
+    @Published var pinTarget: PinDrop?
+    /// Bumped when a comment is added from outside an app's screen, so it
+    /// reloads its comments and pins.
+    @Published var notesTick = 0
+
+    /// A comment pinned to one spot on the page.
+    func dropComment(_ pin: PinDrop, _ text: String) async {
+        guard let token = session?.token else { return }
+        do {
+            struct Made: Decodable { let id: String }
+            let _: Made = try await API.call("api/tools/\(pin.slug)/notes", method: "POST",
+                                             body: ["text": text, "anchor": pin.anchor.body], chat: token)
+            notesTick += 1
+        } catch { self.error = error.localizedDescription }
+    }
+
     /// Sign-in, Face ID or the name step is showing.
     var firstRun: Bool {
         personKey == nil || (!unlocked && !(personKey ?? "").isEmpty) || name.isEmpty
     }
+    /// Where each app's row sits on home, so closing one shrinks it back
+    /// into its own row, even one made after it was opened.
+    var rowFrames: [String: CGRect] = [:]
+
+    func goHome() {
+        host?.view.endEditing(true)
+        let id: String? = switch route {
+        case .tool(let slug): slug
+        case .draft(let key): key
+        case .home: nil
+        }
+        if let id, let frame = rowFrames[id] { revealFrom = frame }
+        // One render with the new target first, so the closing card shrinks
+        // into the right row.
+        objectWillChange.send()
+        DispatchQueue.main.async {
+            withAnimation(.reveal) { self.route = .home }
+        }
+    }
+
     /// The row an app is opening from, so its screen grows out of that row.
     var revealFrom: CGRect = .zero
     @Published var loading = false
@@ -554,6 +591,12 @@ final class ChatStore: ObservableObject {
         guard let url, let link = Self.parse(url), let slug = link.slug, let isChange = pendingSend[slug] else { return }
         pendingSend[slug] = nil
         unpublished.remove(slug)
+        if let token = session?.token {
+            Task {
+                struct Done: Decodable { let ok: Bool }
+                let _: Done? = try? await API.call("api/tools/\(slug)/shared", method: "POST", body: [:], chat: token)
+            }
+        }
         if isChange { Task { await keep(slug, announce: false) } }
     }
 

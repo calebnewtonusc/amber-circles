@@ -17,6 +17,9 @@ struct LivePanel: View {
     var buildKey: String? = nil
     @Binding var expanded: Bool
     var height: CGFloat = 440
+    /// The chat's pins, as the page's pin layer reads them.
+    var pinsJSON: String? = nil
+    var onPin: ((PinEvent) -> Void)? = nil
 
     private var key: String { buildKey ?? slug ?? "__new" }
     private var building: Bool { store.changing[key] != nil }
@@ -28,7 +31,9 @@ struct LivePanel: View {
             // (Caleb: "the back layer should already be loaded but hidden"),
             // so opening is a reveal, never a wait.
             WebFrame(url: building ? nil : slug.flatMap { store.openURL($0, draft: store.tool($0)?.has_draft == true) },
-                     html: building ? liveHTML : nil)
+                     html: building ? liveHTML : nil,
+                     pinsJSON: building ? nil : pinsJSON,
+                     onPin: building ? nil : onPin)
                 .id(slug.map { "\($0)-\(store.tool($0)?.version ?? 0)-\(store.tool($0)?.has_draft == true)" } ?? "new")
                 .frame(height: height)
                 .allowsHitTesting(expanded)
@@ -42,6 +47,10 @@ struct LivePanel: View {
                             .padding(.horizontal, 10).frame(height: 30)
                             .background(Capsule().fill(Amber.amber))
                             .transition(.opacity)
+                    } else if onPin != nil {
+                        Text("Double tap anything to comment").font(Amber.font(13, .bold)).foregroundStyle(Amber.ink)
+                            .padding(.horizontal, 10).frame(height: 30)
+                            .background(Capsule().fill(.ultraThinMaterial))
                     }
                     Spacer()
                     if let slug, !building {
@@ -142,8 +151,38 @@ struct LivePanel: View {
 struct WebFrame: UIViewRepresentable {
     let url: URL?
     var html: String? = nil
+    var pinsJSON: String? = nil
+    var onPin: ((PinEvent) -> Void)? = nil
 
-    final class Coordinator { var lastLength = 0; var loadedURL: URL? }
+    final class Coordinator: NSObject, WKScriptMessageHandler, WKNavigationDelegate {
+        var lastLength = 0
+        var loadedURL: URL?
+        weak var view: WKWebView?
+        /// The app's own frame, which is where the pin layer lives.
+        var frame: WKFrameInfo?
+        var pinsJSON: String?
+        var pushed: String?
+        var onPin: ((PinEvent) -> Void)?
+
+        func userContentController(_ controller: WKUserContentController, didReceive message: WKScriptMessage) {
+            guard let body = message.body as? [String: Any] else { return }
+            if body["kind"] as? String == "ready" {
+                frame = message.frameInfo
+                pushed = nil
+                push()
+            } else if let event = PinEvent(body) {
+                onPin?(event)
+            }
+        }
+
+        func push() {
+            guard let view, let frame, let json = pinsJSON, json != pushed else { return }
+            pushed = json
+            view.evaluateJavaScript("window.__amberSetPins && window.__amberSetPins(\(json))", in: frame, in: .page) { _ in }
+        }
+
+        func webView(_ webView: WKWebView, didStartProvisionalNavigation navigation: WKNavigation!) { frame = nil }
+    }
 
     /// A stand-in for Amber's data bridge (public/bridge.js), so a page that
     /// is still being written can draw its empty state instead of sitting on
@@ -157,7 +196,15 @@ struct WebFrame: UIViewRepresentable {
     func makeCoordinator() -> Coordinator { Coordinator() }
 
     func makeUIView(context: Context) -> WKWebView {
-        let view = WKWebView()
+        let config = WKWebViewConfiguration()
+        if onPin != nil {
+            config.userContentController.add(WeakPinHandler(context.coordinator), name: "amber")
+            config.userContentController.addUserScript(
+                WKUserScript(source: PinScript.source, injectionTime: .atDocumentEnd, forMainFrameOnly: false))
+        }
+        let view = WKWebView(frame: .zero, configuration: config)
+        view.navigationDelegate = context.coordinator
+        context.coordinator.view = view
         view.isOpaque = false
         view.backgroundColor = UIColor(Amber.paper)
         view.scrollView.contentInsetAdjustmentBehavior = .never
@@ -165,6 +212,9 @@ struct WebFrame: UIViewRepresentable {
     }
 
     func updateUIView(_ view: WKWebView, context: Context) {
+        context.coordinator.onPin = onPin
+        context.coordinator.pinsJSON = pinsJSON
+        context.coordinator.push()
         if let html {
             guard html.count - context.coordinator.lastLength > 600 || context.coordinator.lastLength == 0 else { return }
             context.coordinator.lastLength = html.count
