@@ -31,6 +31,20 @@ final class MessagesViewController: MSMessagesAppViewController {
         store.attach(conversation)
     }
 
+    /// Leaving Amber clears home's chat too. iMessage can keep the extension
+    /// alive and bring it back without calling willBecomeActive, so clearing
+    /// only on open left the old chat up (Caleb's phone, 13:09, 2026-09-28).
+    override func willResignActive(with conversation: MSConversation) {
+        super.willResignActive(with: conversation)
+        store.talk[""] = []
+        store.speaker.stop()
+    }
+
+    override func didBecomeActive(with conversation: MSConversation) {
+        super.didBecomeActive(with: conversation)
+        store.talk[""] = []
+    }
+
     override func didSelect(_ message: MSMessage, conversation: MSConversation) {
         super.didSelect(message, conversation: conversation)
         store.attach(conversation)
