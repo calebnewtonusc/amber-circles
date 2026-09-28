@@ -16,6 +16,7 @@ import pg from "pg";
 import { streamSSE } from "hono/streaming";
 import { build, catchUp, describeChange, explain, patch, talk, titleFrom } from "./builder.js";
 import { converse, extractMemories } from "./agent.js";
+import { verifyAppleToken } from "./apple.js";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const PORT = Number(process.env.PORT || 8787);
@@ -1512,7 +1513,12 @@ app.post("/api/chats/:id/agent", async (c) => {
   const {
     rows: [chat],
   } = await pool.query("select name from circles where id = $1", [circleId]);
+  const person = await personFromKey(c.req.header("x-amber-person"));
+  const personMemories = person
+    ? (await pool.query("select description from person_memories where person_id = $1 order by updated_at desc limit 40", [person.id])).rows.map((r) => r.description)
+    : [];
   const result = await converse({
+    personMemories,
     db: chatData(circleId, owner),
     chat,
     speaker: owner.chatMember,
@@ -1536,7 +1542,21 @@ app.post("/api/chats/:id/agent", async (c) => {
         today: new Date().toISOString().slice(0, 10),
       }),
     )
-    .then((found) => Promise.all(found.map((memory) => data.remember({ ...memory, by: owner.chatMember.id }))))
+    .then((found) =>
+      Promise.all(
+        found.map((memory) =>
+          // A fact about the speaker's own style goes with them to every
+          // chat; anything about this chat stays in this chat.
+          memory.scope === "person" && person
+            ? pool.query(
+                `insert into person_memories (id, person_id, name, description, body) values ($1, $2, $3, $4, $5)
+                 on conflict (person_id, name) do update set description = excluded.description, body = excluded.body, updated_at = now()`,
+                [newId("pm"), person.id, String(memory.name).slice(0, 80), String(memory.description).slice(0, 300), String(memory.body).slice(0, 2000)],
+              )
+            : data.remember({ ...memory, by: owner.chatMember.id }),
+        ),
+      ),
+    )
     .catch((error) => console.error("memory extraction failed", error.message));
   // What the agent set in motion, written where it will read it next turn,
   // so a question from someone else never restarts a change already running.
@@ -1551,6 +1571,35 @@ app.post("/api/chats/:id/agent", async (c) => {
   }
   return c.json(result);
 });
+
+// Sign in with Apple. The person gets a key for this phone; their memory
+// follows them into every chat they use Amber in.
+app.post("/api/people/signin", async (c) => {
+  const body = await c.req.json().catch(() => ({}));
+  let apple;
+  try {
+    apple = await verifyAppleToken(body.identityToken);
+  } catch (error) {
+    throw new HttpError(401, error.message);
+  }
+  const key = `per_${newToken()}`;
+  const name = String(body.name || "").trim().slice(0, 80);
+  const {
+    rows: [person],
+  } = await pool.query(
+    `insert into people (id, apple_hash, key_hash, name) values ($1, $2, $3, $4)
+     on conflict (apple_hash) do update set key_hash = excluded.key_hash, name = case when excluded.name = '' then people.name else excluded.name end
+     returning id, name`,
+    [newId("per"), hash(`apple:${apple.sub}`), hash(key), name],
+  );
+  return c.json({ key, name: person.name });
+});
+
+async function personFromKey(key) {
+  if (!key) return null;
+  const { rows } = await pool.query("select id, name from people where key_hash = $1", [hash(key)]);
+  return rows[0] || null;
+}
 
 // The Drive view under the apps: open comments on every app, and the ideas
 // the chat's memory holds as wishes (Caleb: "below the apps already made you

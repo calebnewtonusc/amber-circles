@@ -226,3 +226,24 @@ create table if not exists tool_seen (
   at         timestamptz not null default now(),
   primary key (member_id, tool_id)
 );
+
+-- A person across every chat, from Sign in with Apple. Their memory holds
+-- facts about them only (style, preferences, how they like to work), never
+-- what was said in another chat (Caleb: "not the stuff between me and my
+-- grandpa, but yes it should remember things about me").
+create table if not exists people (
+  id          text primary key,
+  apple_hash  text not null unique,
+  key_hash    text not null unique,
+  name        text not null default '',
+  created_at  timestamptz not null default now()
+);
+create table if not exists person_memories (
+  id          text primary key,
+  person_id   text not null references people(id) on delete cascade,
+  name        text not null,
+  description text not null,
+  body        text not null,
+  updated_at  timestamptz not null default now(),
+  unique (person_id, name)
+);

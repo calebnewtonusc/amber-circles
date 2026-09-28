@@ -156,7 +156,7 @@ const TOOLS = [
   },
 ];
 
-function system({ chatName, people, speaker, focus, memories, tools }) {
+function system({ chatName, people, speaker, focus, memories, tools, personMemories = [] }) {
   const shelf = tools.length
     ? tools.map((t) => `- ${t.title} (slug ${t.slug}), made by ${t.made_by || "someone"}, version ${t.version}${t.has_draft ? ", a change is waiting to be kept" : ""}, ${t.entries} entries, ${t.notes} comments`).join("\n")
     : "(nothing made yet)";
@@ -172,7 +172,7 @@ The chat: ${chatName}. People in it: ${people.join(", ")}. You are talking with 
 What this chat has made (already current, no need to list it):
 ${shelf}
 
-What you remember (the index; recall a name to read its body):
+${personMemories.length ? `What you know about ${speaker} from every chat they use you in (their own style and preferences only; never mention another chat's contents):\n${personMemories.map((m) => `- ${m}`).join("\n")}\n\n` : ""}What you remember about this chat (the index; recall a name to read its body):
 ${index}
 
 How you work, and why:
@@ -204,7 +204,7 @@ You are heard, not read. The people here may be in their seventies:
 }
 
 /** One turn of the conversation. `db` supplies the chat's data. */
-export async function converse({ db, chat, speaker, focusSlug, text }) {
+export async function converse({ db, chat, speaker, focusSlug, text, personMemories = [] }) {
   const [tools, memories, people] = await Promise.all([
     db.tools(),
     db.memories(),
@@ -312,6 +312,7 @@ export async function converse({ db, chat, speaker, focusSlug, text }) {
         focus,
         memories,
         tools,
+        personMemories,
       }),
       tools: TOOLS,
       messages,
@@ -362,10 +363,11 @@ Rules, each from something that broke elsewhere:
 - When a fact changes, write the transition: "Was X, now Y because Z, per <name>". A silent overwrite loses why it changed.
 - "about" is the person the fact is about, which is not always the speaker: "Ruth can't read small text", said by her son, is about Ruth.
 - Resolve relative dates against today (${today}). Never store "tomorrow" or "Sunday"; store the date.
+- scope: "person" when the fact is about the speaker themselves and would help in any chat (their design taste, how they like to be talked to, their role); "chat" for everything about this group and its apps. Never put another person's details or this chat's contents in a person fact.
 - modality: wish (asked for, not done), decided, done (live for everyone: ONLY when the conversation shows [Kept] or it was published), declined (tried and put back), fact. Starting a build is not done; a build in progress is decided.
 - When in doubt, skip. A wrong memory is worse than a missing one here, because the assistant will say it out loud.
 
-Reply with JSON only: {"memories":[{"name":"short-kebab-slug","description":"one line","body":"the fact","modality":"wish|decided|done|declined|fact","about":"a name or empty"}]} and an empty list when there is nothing.`,
+Reply with JSON only: {"memories":[{"name":"short-kebab-slug","description":"one line","body":"the fact","modality":"wish|decided|done|declined|fact","about":"a name or empty","scope":"person|chat"}]} and an empty list when there is nothing.`,
     messages: [
       {
         role: "user",
