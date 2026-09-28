@@ -1745,8 +1745,10 @@ struct CompactView: View {
                     store.host?.expand()
                     DispatchQueue.main.asyncAfter(deadline: .now() + 0.35) { store.startNewProject() }
                 } label: {
+                    // One line, always: it wrapped to two on a phone mid-morph.
                     Label("New project", systemImage: "plus")
                         .font(Amber.font(15, .bold)).foregroundStyle(.white)
+                        .lineLimit(1).fixedSize()
                         .padding(.horizontal, 14).frame(height: 40)
                         .background(Capsule().fill(Amber.ink))
                 }
@@ -1762,6 +1764,7 @@ struct CompactView: View {
                         Task { await store.homeSay(prompt) }
                     } label: {
                         Text(label).font(Amber.font(15)).foregroundStyle(Amber.body)
+                            .lineLimit(1).fixedSize()
                             .padding(.horizontal, 14).frame(height: 40)
                             .overlay(Capsule().strokeBorder(Amber.hairline, lineWidth: 1))
                     }
