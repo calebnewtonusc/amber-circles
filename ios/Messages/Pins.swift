@@ -190,7 +190,7 @@ enum PinScript {
         Object.assign(input.style, { flex: '1', minWidth: '0', font: '15px -apple-system, system-ui', padding: '8px 10px', borderRadius: '10px', border: '1px solid #ebebeb', outline: 'none' });
         input.addEventListener('keydown', function (e) { if (e.key === 'Enter' && input.value.trim()) { post({ kind: 'reply', id: pin.id, text: input.value.trim() }); input.value = ''; input.blur(); } });
         var done = document.createElement('button'); done.textContent = 'Resolve';
-        Object.assign(done.style, { font: '700 14px -apple-system, system-ui', color: '#fff', background: '#E8820C', border: '0', borderRadius: '999px', padding: '8px 12px' });
+        Object.assign(done.style, { font: '700 14px -apple-system, system-ui', color: '#fff', background: '#171717', border: '0', borderRadius: '999px', padding: '8px 12px' });
         done.addEventListener('click', function () { post({ kind: 'resolve', id: pin.id }); });
         row.appendChild(input); row.appendChild(done); c.appendChild(row);
         return c;

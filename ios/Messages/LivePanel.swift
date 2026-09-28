@@ -42,11 +42,7 @@ struct LivePanel: View {
             // corner (Caleb: "there should just be the little X in the corner").
             if expanded {
                 HStack(spacing: 8) {
-                    if !building, onPin != nil {
-                        Text("Double tap anything to comment").font(Amber.font(13, .bold)).foregroundStyle(Amber.ink)
-                            .padding(.horizontal, 10).frame(height: 30)
-                            .background(Capsule().fill(.ultraThinMaterial))
-                    }
+
                     Spacer()
                     if let slug, !building {
                         cornerButton("safari", label: "Open in Safari") {
@@ -58,6 +54,20 @@ struct LivePanel: View {
                 .padding(10)
                 // What is being built right now sits at the bottom, so it never
                 // covers the app's own title (Caleb's screenshot, 2026-09-27).
+                // Hints and progress sit at the bottom, never over the app's
+                // own title.
+                if !building, onPin != nil {
+                    VStack {
+                        Spacer()
+                        Text("Double tap anything to comment").font(Amber.font(13, .bold)).foregroundStyle(Amber.ink)
+                            .padding(.horizontal, 12).frame(height: 30)
+                            .background(Capsule().fill(.ultraThinMaterial))
+                            .overlay(Capsule().strokeBorder(Amber.hairline, lineWidth: 1))
+                            .padding(12)
+                    }
+                    .frame(height: height)
+                    .allowsHitTesting(false)
+                }
                 if building {
                     VStack {
                         Spacer()

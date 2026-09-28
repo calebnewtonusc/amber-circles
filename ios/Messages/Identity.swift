@@ -64,6 +64,7 @@ struct SignInView: View {
             // it just cannot remember you across chats.
             Button("Continue without signing in") {
                 store.revealFrom = skipFrame
+                UserDefaults.standard.set(true, forKey: "amber.signinSkipped")
                 withAnimation(.reveal) {
                     store.personKey = ""
                     store.unlocked = true

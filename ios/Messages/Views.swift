@@ -293,7 +293,8 @@ struct HomeView: View {
                     // Home is a chat too: what people asked Amber here, its
                     // answers, and a card for every project started from it.
                     VStack(alignment: .leading, spacing: 12) {
-                        if (store.talk[""] ?? []).isEmpty && store.liveSpeech == nil { StarterChips() }
+                        if (store.talk[""] ?? []).isEmpty && store.liveSpeech == nil
+                            && (store.overview?.tools ?? []).isEmpty && store.drafts.isEmpty { StarterChips() }
                         ForEach(store.talk[""] ?? []) { turn in
                             if let key = turn.project {
                                 ProjectCard(key: key).transition(.incoming(mine: false))
@@ -439,7 +440,6 @@ struct DraftView: View {
                             Bubble(text: turn.text, mine: turn.mine, who: turn.who, typing: turn.fresh)
                                 .transition(turn.settled ? .identity : .incoming(mine: turn.mine))
                         }
-                        if store.changing[key] != nil { BuildStatus(text: store.doing[key] ?? "Starting") }
                         if let live = store.liveSpeech { Bubble(text: live, mine: true, live: true) }
                         Color.clear.frame(height: 12).id("end")
                     }
@@ -678,9 +678,7 @@ struct ToolView: View {
                 Bubble(text: live, mine: true, live: true)
                     .transition(.opacity)
             }
-            if store.changing[slug] != nil {
-                BuildStatus(text: store.doing[slug] ?? "Making that change")
-            }
+            // What is being built shows once, in the preview's pill above.
             if tool.has_draft, store.changing[slug] == nil {
                 Bubble(text: "Only you can see this change. Publish it online when it's right, or put it back.", mine: false) {
                     Button("Put it back") { Task { await store.discard(slug); await load() } }
@@ -713,35 +711,43 @@ struct ToolView: View {
     /// Two acts in one slim strip: a bubble for the chat, or the change live
     /// on the site. With no change waiting, the right side says it is live.
     private func shareTab(_ tool: ToolItem) -> some View {
-        HStack(spacing: 0) {
+        HStack(spacing: 10) {
+            // Real buttons, with edges and weight, so they read as tappable
+            // (Caleb, 2026-09-28: "these aren't clearly buttons").
             Button { store.shareToChat(slug) } label: {
                 Label("Send to chat", systemImage: "bubble.left.fill")
                     .font(Amber.font(14, .bold)).foregroundStyle(Amber.ink)
-                    .frame(maxWidth: .infinity, minHeight: 44)
-                    .contentShape(Rectangle())
+                    .padding(.horizontal, 14).frame(height: 36)
+                    .background(Capsule().fill(Amber.sheet))
+                    .overlay(Capsule().strokeBorder(Amber.hairline, lineWidth: 1))
+                    .shadow(color: .black.opacity(0.06), radius: 2, y: 1)
             }
             .buttonStyle(.plain)
-            Rectangle().fill(Amber.hairline).frame(width: 1, height: 20)
+            Spacer(minLength: 4)
             if tool.has_draft {
                 Button { Task { await store.keep(slug); await load() } } label: {
                     Label("Publish online", systemImage: "globe")
-                        .font(Amber.font(14, .bold)).foregroundStyle(Amber.ink)
-                        .frame(maxWidth: .infinity, minHeight: 44)
-                        .contentShape(Rectangle())
+                        .font(Amber.font(14, .bold)).foregroundStyle(.white)
+                        .padding(.horizontal, 14).frame(height: 36)
+                        .background(Capsule().fill(Amber.ink))
                 }
                 .buttonStyle(.plain)
                 .disabled(store.changing[slug] != nil)
             } else {
-                Label("Live online", systemImage: "globe")
-                    .font(Amber.font(14)).foregroundStyle(Amber.muted)
-                    .frame(maxWidth: .infinity, minHeight: 44)
+                // A state, not an action, so it looks like one.
+                HStack(spacing: 6) {
+                    Circle().fill(Color(red: 52 / 255, green: 199 / 255, blue: 89 / 255)).frame(width: 7, height: 7)
+                    Text("Live online").font(Amber.font(14)).foregroundStyle(Amber.muted)
+                }
+                .padding(.trailing, 4)
             }
         }
-        .padding(.bottom, 6)
+        .padding(.horizontal, 10).padding(.top, 8).padding(.bottom, 14)
         .background(UnevenRoundedRectangle(topLeadingRadius: 14, topTrailingRadius: 14, style: .continuous).fill(Amber.wash))
         .overlay(UnevenRoundedRectangle(topLeadingRadius: 14, topTrailingRadius: 14, style: .continuous).strokeBorder(Amber.hairline, lineWidth: 1))
         .padding(.bottom, -6)
     }
+
 
     /// Open pinned comments, as the preview's pin layer draws them.
     private var pinsJSON: String {
@@ -1616,26 +1622,6 @@ struct HomeActivityTray: View {
     }
 }
 
-/// While Amber builds: one line that says what it is doing right now and
-/// updates in place, instead of a new message for every step (Caleb's
-/// screenshot, 2026-09-27: ten "Adding the..." bubbles).
-struct BuildStatus: View {
-    let text: String
-    var body: some View {
-        VStack(alignment: .leading, spacing: 3) {
-            Text("Amber").font(Amber.font(12)).foregroundStyle(Amber.muted).padding(.leading, 14)
-            HStack(spacing: 10) {
-                ProgressView().controlSize(.small)
-                Text(text).font(Amber.font(16)).foregroundStyle(Amber.body)
-                    .contentTransition(.opacity)
-                    .animation(.reveal, value: text)
-            }
-            .padding(.horizontal, 14).padding(.vertical, 10)
-            .background(RoundedRectangle(cornerRadius: 18, style: .continuous).fill(Amber.iMessageGrey.opacity(0.6)))
-        }
-        .transition(.incoming(mine: false))
-    }
-}
 
 /// On an empty home, a few things to start with, one tap each.
 struct StarterChips: View {

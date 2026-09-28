@@ -191,7 +191,10 @@ final class ChatStore: ObservableObject {
     /// What the person is saying right now, while they hold the talk bar.
     @Published var liveSpeech: String?
     /// From Sign in with Apple; nil until they sign in.
-    @Published var personKey: String? = PersonKey.load()
+    /// Nil means nobody has chosen yet. Skipping sign-in is remembered too:
+    /// kept only in memory, every reopen of iMessage asked again (seen on the
+    /// simulator, 2026-09-28).
+    @Published var personKey: String? = PersonKey.load() ?? (UserDefaults.standard.bool(forKey: "amber.signinSkipped") ? "" : nil)
     /// Face ID passed for this open.
     @Published var unlocked = false
     /// New apps being talked through on this phone, shown as boxes in the list.
@@ -503,9 +506,9 @@ final class ChatStore: ObservableObject {
         // home screen gets one now.
         let draftKey = key.hasPrefix("new-") ? key : newDraft(title: "New app").id
         let since = drafts.first { $0.id == draftKey }?.started ?? Date()
-        if let index = drafts.firstIndex(where: { $0.id == draftKey }) {
-            drafts[index].title = String(request.prefix(40))
-        }
+        // The name stays "New project" until the app names itself: the first
+        // 40 characters of the request cut off mid-word in the top bar
+        // ('A simple web page that just displays "He', 2026-09-28).
         changing[draftKey] = Date()
         if let index = drafts.firstIndex(where: { $0.id == draftKey }) { drafts[index].buildStarted = Date() }
         defer { changing[draftKey] = nil }
@@ -553,7 +556,7 @@ final class ChatStore: ObservableObject {
             if route == .draft(draftKey) { route = .tool(slug) }
         }
         let title = tool(slug)?.title ?? "it"
-        reply(slug, "\(title) is ready. Try it, then tap Publish when you want the chat to have it.")
+        reply(slug, "\(title) is ready. Try it in the preview, then tap Send to chat when you want everyone to have it.")
     }
 
     /// Drafts whose build finished while nobody was watching: each takes the
@@ -608,15 +611,21 @@ final class ChatStore: ObservableObject {
             // a project").
             let draft = newDraft(title: "New project")
             let spoken = liveSpeech != nil
-            talk["", default: []].append(Turn(text: words, mine: true, settled: spoken))
+            let asked = Turn(text: words, mine: true, settled: spoken)
+            let card = Turn(text: "", mine: false, project: draft.id)
+            talk["", default: []].append(asked)
             liveSpeech = nil
-            withAnimation(.messageIn) {
-                talk["", default: []].append(Turn(text: "", mine: false, project: draft.id))
-            }
+            withAnimation(.messageIn) { talk["", default: []].append(card) }
             try? await Task.sleep(for: .milliseconds(700))
-            openedRow = "card-\(draft.id)"
-            revealFrom = rowFrames[openedRow ?? ""] ?? .zero
+            revealFrom = rowFrames["card-\(draft.id)"] ?? .zero
+            // Closing shrinks into the project's row: the card is only the
+            // doorway, and it leaves home once the project is open (Caleb,
+            // 2026-09-28: "when you go back to the main page, this shouldn't
+            // be there"). What was asked lives inside the project.
+            openedRow = draft.id
             withAnimation(.reveal) { route = .draft(draft.id) }
+            try? await Task.sleep(for: .milliseconds(500))
+            talk[""]?.removeAll { $0.id == asked.id || $0.id == card.id }
             await say(draft.id, words)
             return
         }
