@@ -104,6 +104,8 @@ test("pins keep their anchor, and activity separates edits, publishes and shares
   assert.equal((await call(`/api/tools/${slug}/shared`, { method: "POST", chat: ruth.token, body: {} })).status, 200);
   const activity = (await call(`/api/tools/${slug}/activity`, { chat: stan.token })).json.activity;
   assert.deepEqual(activity.map((a) => [a.kind, a.name]), [["shared", "Ruth"]]);
+  const board = (await call(`/api/chats/${stan.chat}/board`, { chat: stan.token })).json;
+  assert.deepEqual(board.activity.map((a) => [a.kind, a.name, a.slug]), [["shared", "Ruth", slug]], "home sees every project's activity");
   const other = await startChat();
   assert.equal((await call(`/api/tools/${slug}/activity`, { chat: other.ruth.token })).status, 404);
 });

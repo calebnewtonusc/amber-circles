@@ -1614,7 +1614,7 @@ app.get("/api/chats/:id/board", async (c) => {
   const owner = await requireOwner(c);
   if (owner.chatMember?.circleId !== c.req.param("id")) throw new HttpError(403, "You are not in this chat.");
   const circleId = owner.chatMember.circleId;
-  const [{ rows: comments }, { rows: ideas }] = await Promise.all([
+  const [{ rows: comments }, { rows: ideas }, { rows: activity }] = await Promise.all([
     pool.query(
       `select n.id, n.text, n.created_at, m.name, t.slug, t.title from tool_notes n
          join tools t on t.id = n.tool_id left join members m on m.id = n.member_id
@@ -1625,9 +1625,16 @@ app.get("/api/chats/:id/board", async (c) => {
       "select name, description, about, updated_at from chat_memories where circle_id = $1 and modality = 'wish' order by updated_at desc limit 20",
       [circleId],
     ),
+    // Every project's history in one list, for home's Activity.
+    pool.query(
+      `select * from (select a.id, a.kind, a.text, a.version, a.created_at, m.name, t.slug, t.title from tool_activity a
+         join tools t on t.id = a.tool_id left join members m on m.id = a.member_id
+        where t.circle_id = $1 order by a.created_at desc limit 40) recent order by created_at`,
+      [circleId],
+    ),
   ]);
   const building = [...buildingNow.values()].filter((b) => b.circle === circleId).map(({ who, what }) => ({ who, what }));
-  return c.json({ comments, ideas, building });
+  return c.json({ comments, ideas, building, activity });
 });
 
 // A new app is talked through before it exists. When it lands, the talk
