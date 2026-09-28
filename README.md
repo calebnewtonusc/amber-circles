@@ -1,20 +1,33 @@
-# Amber Circles
+# Amber
 
-Ask Claude for a tool, and share it like a Google Doc.
+An iMessage app where a group chat builds small software together, by talking.
 
-Someone who has never written code describes a small tool in plain words, like "a prayer list for my Monday Bible class". Claude builds it in about a minute. Only the people in that group, a circle, can open it, each through a personal link sent by text. Built for Origin Weekend Fall 2026, Prompt F, "A Cloud for Small Software", by Caleb Newton and Shirley Park.
+Open Amber inside any iMessage thread, hold the mic, and say what the group needs: "a shift sign-up sheet for our club fair booth". Amber asks at most three questions, reads the plan back, and builds it in about a minute while you watch it come together. The app is live on the web the moment it exists, and everyone in the chat can open it, comment on it, and change it by talking, the way everyone can edit a Google Doc. No accounts, no downloads beyond iMessage, no code.
 
-Live at https://web-production-058309.up.railway.app
+Built for Origin Weekend Fall 2026, Prompt F, "A Cloud for Small Software", by Caleb Newton and Shirley Park.
+
+## Try it
+
+- **iPhone:** TestFlight, public link https://testflight.apple.com/join/7DMFRSv8 (live once Apple's beta review passes). After installing, open any iMessage thread, tap **+**, and choose **Amber**.
+- **Server:** https://web-production-058309.up.railway.app
 
 ## What it does
 
-- **Make it in plain words.** `/make` takes a sentence and a group. Claude Opus 5 writes one HTML file, and the page names each stage while it works.
-- **One live copy.** There is no publish step. A change lands as a draft on the real data, visible only to the owner, until "Keep this" or "Put it back".
-- **Every version kept.** Going back is one tap and is itself a version. "Entries too" also puts the list back exactly as it was, and that can be undone.
-- **Share by name.** Each member gets a personal link. There are no accounts and no passwords, and a stranger with the link can ask to join.
-- **Presence.** The owner sees who is using a tool right now and who has not opened it yet.
-- **Make your own.** Any viewer can copy a tool, without its data, into their own group.
-- **For power users.** Claude and Claude Code can publish through the MCP endpoint at `/mcp/<owner key>`.
+- **Talk to build.** Hold the mic in the message field and speak, or type. Amber interviews you (three questions at most, always including the look you want), then builds. Say "just build it" or "don't ask questions" and it skips straight to building.
+- **Watch it get made.** The preview fills in live as Claude writes the app: each new piece eases in, a status line says what is being added, and Amber narrates out loud.
+- **One project, one conversation.** Home is a chat with Amber plus every project the group has made. Asking for something new drops a project card into the chat, and the card grows into the project.
+- **Everyone in the chat can change it.** Changes are patches, not rewrites, so "make the names bigger" takes seconds. A change stays private to whoever asked until they tap **Publish online**. **Send to chat** drops a bubble for it into the conversation.
+- **Pinned comments, like Google Docs.** Double-tap anything in the preview to pin a comment to that exact element. Each person has their own letter and colour. Reply and resolve right on the pin. A pin whose element is removed resolves itself.
+- **Activity.** Every edit, publish, share, rename and open comment, per project and across the whole chat.
+- **Memory.** Amber remembers each person's style across chats (with Sign in with Apple) and never carries one chat's contents into another.
+
+## How it works
+
+- `ios/`: the iMessage extension and container app, SwiftUI, built with xcodegen. Speech recognition runs on the phone.
+- `server.js`: Node and Hono on Railway, with Postgres. Chats are circles; each member acts with their own token.
+- `agent.js`: the conversational agent (Claude Sonnet 5) with tools for reading the chat's apps, its conversations and memories, proposing a plan, and building or changing an app. The build is refused on the server unless a plan was confirmed or the person said to skip the questions.
+- `builder.js`: Claude Opus 5 streams a new app as one HTML file; Claude Sonnet 5 patches an existing one with exact find-and-replace edits, falling back to a full rebuild.
+- Voice replies use ElevenLabs Flash v2.5 through a server proxy, so no key ever reaches the phone.
 
 ## How a tool is kept safe
 
@@ -48,13 +61,14 @@ AMBER_URL=https://... npm test            # against a deployed copy
 
 - `test/e2e.test.js` covers the gate, the bridge, the frame policy and MCP.
 - `test/flows.test.js` covers versions, entry restore, join requests, presence, copying and removal rights.
+- `test/chat.test.js` covers chats, members, pinned comments, replies and resolve, activity and renames.
 - `test/deny.test.js` enforces DENY.md.
 
 The tests delete every owner they create, so running them against production leaves nothing behind.
 
 ## Design
 
-The stance is editorial, the one Amber's own Classical system already takes. [DENY.md](DENY.md) lists what the interface refuses: gradients, radius above 4px, soft shadows, filled buttons, pills, and a second hue. `test/deny.test.js` fails the build on any of them. Screens are also checked by rendering them with ux-engine's `design-gate`.
+The iMessage app follows Apple's own patterns: the system font, one Messages-style field with the microphone inside it, and one colour, Amber orange, used only for your own messages. Screens open by growing out of the row or card you tapped and close back into it. The web version's rules are in [DENY.md](DENY.md) and enforced by `test/deny.test.js`.
 
 ## Deploy
 
