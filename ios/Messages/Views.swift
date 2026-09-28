@@ -153,8 +153,11 @@ struct NameView: View {
     var body: some View {
         TallAware(frozen: leaving) { tall in
             VStack(alignment: .leading, spacing: tall ? 28 : 18) {
-                if tall { Spacer() }
-                HStack(alignment: .center, spacing: 14) {
+                // Same spot on every step, so the egg and title never move between
+                // them (Caleb, 2026-09-27). Centering moved them, because each
+                // step has a different amount under its title.
+                if tall { Color.clear.frame(height: Onboarding.headerTop) }
+                HStack(alignment: .top, spacing: 14) {
                     EggSlot(rank: 3).frame(width: 44, height: 50)
                     Text("What should the chat call you?").font(Amber.font(30, .heavy)).headline().foregroundStyle(Amber.ink)
                         .fixedSize(horizontal: false, vertical: true)
@@ -1026,4 +1029,10 @@ struct NewProjectRow: View {
             .strokeBorder(Amber.amber.opacity(0.35), style: StrokeStyle(lineWidth: 1.5, dash: [6, 4])))
         .contentShape(Rectangle())
     }
+}
+
+enum Onboarding {
+    /// Where the egg and title sit on every first-run step once iMessage
+    /// gives Amber the full screen: about a third of the way down.
+    static let headerTop: CGFloat = 200
 }

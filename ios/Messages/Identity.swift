@@ -40,8 +40,11 @@ struct SignInView: View {
         // glides to the middle and loosens (Caleb, 2026-09-27).
         TallAware { tall in
         VStack(alignment: .leading, spacing: tall ? 28 : 18) {
-            if tall { Spacer() }
-            HStack(alignment: .center, spacing: 14) {
+            // Same spot on every step, so the egg and title never move between
+                // them (Caleb, 2026-09-27). Centering moved them, because each
+                // step has a different amount under its title.
+                if tall { Color.clear.frame(height: Onboarding.headerTop) }
+            HStack(alignment: .top, spacing: 14) {
                 EggSlot(rank: 1).frame(width: 44, height: 50)
                 Text("Let's build together").font(Amber.font(30, .heavy)).headline().foregroundStyle(Amber.ink)
                     .fixedSize(horizontal: false, vertical: true)
