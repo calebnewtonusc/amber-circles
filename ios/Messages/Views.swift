@@ -113,8 +113,11 @@ struct NameView: View {
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 18) {
-                Image("AmberLogo").resizable().scaledToFit().frame(width: 52, height: 60).accessibilityHidden(true)
-                Text("What should the chat call you?").font(Amber.font(30, .heavy)).headline().foregroundStyle(Amber.ink)
+                HStack(alignment: .center, spacing: 14) {
+                    Image("AmberLogo").resizable().scaledToFit().frame(width: 44, height: 50).accessibilityHidden(true)
+                    Text("What should the chat call you?").font(Amber.font(30, .heavy)).headline().foregroundStyle(Amber.ink)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
                 TextField("Your first name", text: $text)
                     .font(Amber.font(22)).padding(14).frame(minHeight: 60).block()
                     .focused($focused)
@@ -412,8 +415,11 @@ struct BuildingView: View {
     var body: some View {
         TimelineView(.periodic(from: .now, by: 1)) { context in
             VStack(alignment: .leading, spacing: 18) {
-                Image("AmberLogo").resizable().scaledToFit().frame(width: 52, height: 60).accessibilityHidden(true)
-                Text("Making it").font(Amber.font(32, .heavy)).headline().foregroundStyle(Amber.ink)
+                HStack(alignment: .center, spacing: 14) {
+                    Image("AmberLogo").resizable().scaledToFit().frame(width: 44, height: 50).accessibilityHidden(true)
+                    Text("Making it").font(Amber.font(32, .heavy)).headline().foregroundStyle(Amber.ink)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
                 Text("\u{201C}\(state.request)\u{201D}").font(Amber.font(19, .bold)).foregroundStyle(Amber.ink)
                     .padding(.leading, 12)
                     .overlay(Capsule().fill(Amber.hairline).frame(width: 3), alignment: .leading)
