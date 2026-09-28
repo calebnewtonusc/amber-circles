@@ -1684,52 +1684,79 @@ struct StarterChips: View {
     }
 }
 
-/// Amber in the keyboard-sized sheet: a launcher. Your projects as tiles to
-/// jump into, and the message field. Everything that needs room (Activity,
-/// the conversation, the preview) waits for the full screen.
+/// Amber in the keyboard-sized sheet: a launcher. Your projects as pills to
+/// jump into, quick starts, and the message field. Everything that needs room
+/// (Activity, the conversation, the preview) waits for the full screen. Tall
+/// tiles left most of the sheet empty (Caleb, 2026-09-28: "it looks visually
+/// off"), so everything here is one pill high.
 struct CompactView: View {
     @EnvironmentObject var store: ChatStore
 
     private var tools: [ToolItem] { store.overview?.tools ?? [] }
     private var count: Int { tools.count + store.drafts.count }
+    private let starters: [(String, String)] = [
+        ("Sign-up sheet", "Make a sign-up sheet for our next event"),
+        ("Group poll", "Make a poll so the group can vote"),
+        ("Plan a hangout", "Build a page to plan our next hangout"),
+        ("Split costs", "Make a tracker to split costs between us"),
+    ]
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 10) {
+        VStack(alignment: .leading, spacing: 14) {
             HStack(spacing: 6) {
-                Text("Amber").font(Amber.font(17, .heavy)).foregroundStyle(Amber.ink)
-                if count > 0 {
-                    Text("\(count) \(count == 1 ? "project" : "projects") in this chat")
-                        .font(Amber.font(15)).foregroundStyle(Amber.muted)
-                }
-                Spacer()
+                Text("Amber").font(Amber.font(20, .heavy)).foregroundStyle(Amber.ink)
+                Text(count == 0 ? "Build something for this chat" : "\(count) \(count == 1 ? "project" : "projects") here")
+                    .font(Amber.font(15)).foregroundStyle(Amber.muted).lineLimit(1)
+                Spacer(minLength: 8)
                 Button { store.host?.expand() } label: {
                     Image(systemName: "arrow.up.left.and.arrow.down.right")
-                        .font(.system(size: 14, weight: .semibold)).foregroundStyle(Amber.ink)
-                        .frame(width: 44, height: 36).background(Capsule().fill(Amber.wash))
+                        .font(.system(size: 13, weight: .semibold)).foregroundStyle(Amber.ink)
+                        .frame(width: 34, height: 34).background(Circle().fill(Amber.wash))
+                        .frame(width: 44, height: 44)
                 }
                 .accessibilityLabel("Open Amber full screen")
             }
-            .padding(.horizontal, 16).padding(.top, 10)
-            ScrollView(.horizontal, showsIndicators: false) {
-                HStack(spacing: 10) {
-                    tile(letter: "+", title: "New project", filled: true) {
-                        store.host?.expand()
-                        DispatchQueue.main.asyncAfter(deadline: .now() + 0.35) { store.startNewProject() }
-                    }
-                    ForEach(store.drafts) { draft in
-                        tile(letter: String(draft.title.prefix(1)).uppercased(), title: draft.title, filled: false) { open(.draft(draft.id)) }
-                    }
-                    ForEach(tools) { tool in
-                        tile(letter: String(tool.title.prefix(1)).uppercased(), title: tool.title, filled: false) { open(.tool(tool.slug)) }
-                    }
+            .padding(.horizontal, 16).padding(.top, 4)
+            row {
+                Button {
+                    store.host?.expand()
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.35) { store.startNewProject() }
+                } label: {
+                    Label("New project", systemImage: "plus")
+                        .font(Amber.font(15, .bold)).foregroundStyle(.white)
+                        .padding(.horizontal, 14).frame(height: 40)
+                        .background(Capsule().fill(Amber.ink))
                 }
-                .padding(.horizontal, 16)
+                .buttonStyle(.plain)
+                ForEach(store.drafts) { draft in pill(draft.title) { open(.draft(draft.id)) } }
+                ForEach(tools) { tool in pill(tool.title) { open(.tool(tool.slug)) } }
+            }
+            row {
+                ForEach(starters, id: \.0) { label, prompt in
+                    Button {
+                        store.host?.expand()
+                        Task { await store.homeSay(prompt) }
+                    } label: {
+                        Text(label).font(Amber.font(15)).foregroundStyle(Amber.body)
+                            .padding(.horizontal, 14).frame(height: 40)
+                            .overlay(Capsule().strokeBorder(Amber.hairline, lineWidth: 1))
+                    }
+                    .buttonStyle(.plain)
+                }
             }
             Spacer(minLength: 0)
             TalkBar()
         }
+        .padding(.top, 8)
         .background(Amber.paper.ignoresSafeArea())
         .task { await store.refresh() }
+    }
+
+    private func row<Content: View>(@ViewBuilder _ content: () -> Content) -> some View {
+        ScrollView(.horizontal, showsIndicators: false) {
+            HStack(spacing: 8) { content() }.padding(.horizontal, 16)
+        }
+        .scrollClipDisabled()
     }
 
     private func open(_ route: Route) {
@@ -1738,22 +1765,18 @@ struct CompactView: View {
         store.host?.expand()
     }
 
-    private func tile(letter: String, title: String, filled: Bool, action: @escaping () -> Void) -> some View {
+    private func pill(_ title: String, action: @escaping () -> Void) -> some View {
         Button(action: action) {
-            VStack(alignment: .leading, spacing: 8) {
-                Text(letter).font(Amber.font(17, .heavy))
-                    .foregroundStyle(filled ? .white : Amber.ink)
-                    .frame(width: 34, height: 34)
-                    .background(RoundedRectangle(cornerRadius: 9, style: .continuous).fill(filled ? Amber.ink : Amber.wash))
-                Text(title).font(Amber.font(13, .bold)).foregroundStyle(Amber.ink)
-                    .lineLimit(2).multilineTextAlignment(.leading)
-                    .frame(maxWidth: .infinity, alignment: .topLeading)
-                Spacer(minLength: 0)
+            HStack(spacing: 8) {
+                Text(String(title.prefix(1)).uppercased()).font(Amber.font(13, .heavy)).foregroundStyle(Amber.ink)
+                    .frame(width: 26, height: 26).background(Circle().fill(Amber.wash))
+                Text(title).font(Amber.font(15, .bold)).foregroundStyle(Amber.ink).lineLimit(1)
+                    .frame(maxWidth: 170, alignment: .leading)
             }
-            .padding(10)
-            .frame(width: 104, height: 104)
-            .background(RoundedRectangle(cornerRadius: 14, style: .continuous).fill(Amber.sheet))
-            .overlay(RoundedRectangle(cornerRadius: 14, style: .continuous).strokeBorder(Amber.hairline, lineWidth: 1))
+            .padding(.leading, 7).padding(.trailing, 14).frame(height: 40)
+            .background(Capsule().fill(Amber.sheet))
+            .overlay(Capsule().strokeBorder(Amber.hairline, lineWidth: 1))
+            .shadow(color: .black.opacity(0.04), radius: 2, y: 1)
         }
         .buttonStyle(.plain)
     }
