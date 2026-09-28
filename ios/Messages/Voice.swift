@@ -131,6 +131,8 @@ final class Listener: ObservableObject {
 struct HoldToTalk: View {
     @EnvironmentObject var store: ChatStore
     @StateObject private var listener = Listener()
+    /// The mic inside the message field, instead of the big pill.
+    var compact = false
     var label = "Hold to talk"
     /// Pressing talk cuts Amber off at once, before the microphone opens
     /// (Chewbacca docs/VOICE-DESIGN.md, "Interrupting").
@@ -139,6 +141,50 @@ struct HoldToTalk: View {
     @State private var pressing = false
 
     var body: some View {
+        if compact { mic } else { pill }
+    }
+
+    private var hold: some Gesture {
+        DragGesture(minimumDistance: 0)
+            .onChanged { _ in
+                guard !pressing else { return }
+                pressing = true
+                UIImpactFeedbackGenerator(style: .medium).impactOccurred()
+                onPress()
+                listener.start()
+            }
+            .onEnded { _ in
+                pressing = false
+                Task {
+                    let heard = await listener.stop()
+                    store.speaker.listening = false
+                    if heard.isEmpty { store.liveSpeech = nil } else { onHeard(heard) }
+                }
+            }
+    }
+
+    private var mic: some View {
+        Image(systemName: listener.isListening ? "waveform" : "mic.fill")
+            .font(.system(size: 16, weight: .semibold))
+            .symbolEffect(.variableColor.iterative, isActive: listener.isListening)
+            .foregroundStyle(listener.isListening ? .white : Amber.ink)
+            .frame(width: 36, height: 36)
+            .background(Circle().fill(listener.isListening ? Amber.ink : Amber.wash))
+            .scaleEffect(pressing ? 1.15 : 1)
+            .animation(.messageIn, value: pressing)
+            .frame(width: 44, height: 44)
+            .contentShape(Rectangle())
+            .gesture(hold)
+            .onChange(of: listener.text) { _, words in if listener.isListening { store.liveSpeech = words } }
+            .onChange(of: listener.isListening) { _, on in
+                if on { store.speaker.stop(); store.speaker.listening = true; store.liveSpeech = "" }
+            }
+            .onChange(of: listener.problem) { _, problem in if let problem { store.error = problem } }
+            .accessibilityLabel("Hold to talk to Amber")
+            .accessibilityHint("Hold, say it, then let go")
+    }
+
+    private var pill: some View {
         VStack(alignment: .leading, spacing: 8) {
             HStack(spacing: 12) {
                 Image(systemName: listener.isListening ? "waveform" : "mic.fill")

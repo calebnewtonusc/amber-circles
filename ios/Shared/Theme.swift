@@ -33,18 +33,25 @@ enum Amber {
 
     enum Weight { case regular, bold, heavy }
 
+    /// The system font, SF Pro: Geist read as a website inside an iPhone
+    /// (Caleb, 2026-09-27: "far from looking like something Apple would make").
     static func font(_ size: CGFloat, _ weight: Weight = .regular) -> Font {
         switch weight {
-        case .regular: return .custom("Geist-Regular", size: size)
-        case .bold: return .custom("Geist-Medium", size: size)
-        case .heavy: return .custom("Geist-SemiBold", size: size)
+        case .regular: return .system(size: size, weight: .regular)
+        case .bold: return .system(size: size, weight: .semibold)
+        case .heavy: return .system(size: size, weight: .bold)
         }
     }
+
+    /// Amber belongs to one thing: your messages (Caleb: "bubbles"). A shade
+    /// deeper than the brand orange, because white text on #E8820C measured
+    /// about 3:1 and this clears 4.5:1.
+    static let bubble = Color(red: 184 / 255, green: 92 / 255, blue: 0)
 }
 
 extension View {
     /// Vercel headings track tight: -2.4px at 48, about -5% of the size.
-    func headline() -> some View { self.tracking(-0.8) }
+    func headline() -> some View { self.tracking(-0.3) }
 }
 
 /// Vercel's buttons: a black pill for the one main action, a white pill with
@@ -59,7 +66,7 @@ struct BlockButton: ButtonStyle {
             .foregroundStyle(primary ? Color.white : Amber.ink)
             .padding(.horizontal, 20)
             .frame(maxWidth: full ? .infinity : nil, minHeight: 50)
-            .background(Capsule().fill(primary ? Amber.amber : Amber.sheet))
+            .background(Capsule().fill(primary ? Amber.ink : Amber.sheet))
             .overlay(Capsule().strokeBorder(primary ? Color.clear : Amber.hairline, lineWidth: 1))
             .opacity(configuration.isPressed ? 0.8 : 1)
             .scaleEffect(configuration.isPressed ? 0.98 : 1)

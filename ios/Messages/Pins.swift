@@ -8,8 +8,6 @@ struct PinDrop: Identifiable, Equatable {
     let anchor: PinAnchor
 }
 
-enum PinMode: Hashable { case comment, change }
-
 /// What the preview's pin layer tells the app.
 enum PinEvent {
     case drop(PinAnchor)

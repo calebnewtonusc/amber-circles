@@ -118,6 +118,29 @@ final class ChatStore: ObservableObject {
     /// Which row or card the open project came from.
     var openedRow: String?
 
+    /// A blank project, grown out of the + in the top bar.
+    func startNewProject() {
+        let draft = newDraft(title: "New project")
+        openedRow = "__plus"
+        revealFrom = rowFrames["__plus"] ?? .zero
+        host?.expand()
+        withAnimation(.reveal) { route = .draft(draft.id) }
+        greet(draft.id, "What are we making? Tell me who it's for and what it needs to do.")
+    }
+
+    func rename(_ key: String, to name: String) async {
+        if let index = drafts.firstIndex(where: { $0.id == key }) {
+            drafts[index].title = name
+            return
+        }
+        guard let token = session?.token else { return }
+        do {
+            struct Renamed: Decodable { let title: String }
+            let _: Renamed = try await API.call("api/tools/\(key)/rename", method: "POST", body: ["title": name], chat: token)
+            await refresh()
+        } catch { self.error = error.localizedDescription }
+    }
+
     /// Opens a project from a card in the home chat.
     func openProject(_ key: String) {
         openedRow = "card-\(key)"
@@ -189,10 +212,12 @@ final class ChatStore: ObservableObject {
     /// (Caleb, 2026-09-27: "everything amber says should show up on screen
     /// as a text").
     func narrate(_ doing: String, in key: String) {
-        guard doing != lastNarrated, Date().timeIntervalSince(lastNarration) > 5, !speaker.isSpeaking else { return }
+        // Shown as the one live build line under the conversation, and said.
+        guard doing != lastNarrated, Date().timeIntervalSince(lastNarration) > 5, !speaker.isSpeaking,
+              let token = session?.token else { return }
         lastNarration = Date()
         lastNarrated = doing
-        reply(key, doing + ".")
+        Task { await speaker.say(doing + ".", token: token) }
     }
 
     /// Amber opens a tool by saying what it is, out loud, once.

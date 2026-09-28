@@ -293,6 +293,7 @@ struct HomeView: View {
                     // Home is a chat too: what people asked Amber here, its
                     // answers, and a card for every project started from it.
                     VStack(alignment: .leading, spacing: 12) {
+                        if (store.talk[""] ?? []).isEmpty && store.liveSpeech == nil { StarterChips() }
                         ForEach(store.talk[""] ?? []) { turn in
                             if let key = turn.project {
                                 ProjectCard(key: key).transition(.incoming(mine: false))
@@ -336,9 +337,6 @@ struct HomeView: View {
 
     private var apps: some View {
         VStack(spacing: 10) {
-            Button { startNew() } label: { NewProjectRow() }
-                .buttonStyle(.plain)
-                .onGeometryChange(for: CGRect.self) { $0.frame(in: .named("stage")) } action: { frames["__new"] = $0 }
             ForEach(store.drafts) { draft in
                 Button { store.openedRow = draft.id; store.revealFrom = frames[draft.id] ?? .zero; withAnimation(.reveal) { store.route = .draft(draft.id) }; store.host?.expand() } label: {
                     DraftRow(draft: draft, building: store.changing[draft.id] != nil, doing: store.doing[draft.id])
@@ -357,7 +355,7 @@ struct HomeView: View {
             if store.loading && (store.overview?.tools ?? []).isEmpty {
                 ProgressView().frame(maxWidth: .infinity, minHeight: 60)
             } else if (store.overview?.tools ?? []).isEmpty && store.drafts.isEmpty {
-                Text("No projects made yet. Time to build!")
+                Text("No projects yet")
                     .font(Amber.font(17)).foregroundStyle(Amber.muted)
                     .frame(maxWidth: .infinity, alignment: .leading)
             }
@@ -366,13 +364,6 @@ struct HomeView: View {
 
     /// A blank project: its box opens out of the button, and Amber asks what
     /// it should be before building anything.
-    private func startNew() {
-        let draft = store.newDraft(title: "New project")
-        store.revealFrom = frames["__new"] ?? .zero
-        withAnimation(.reveal) { store.route = .draft(draft.id) }
-        store.host?.expand()
-        store.greet(draft.id, "What are we making? Tell me who it's for and what it needs to do.")
-    }
 }
 
 /// A new app being talked about, before it exists.
@@ -382,11 +373,11 @@ struct DraftRow: View {
     let doing: String?
     var body: some View {
         HStack(spacing: 14) {
-            RoundedRectangle(cornerRadius: 10, style: .continuous).fill(Amber.amberSoft)
+            RoundedRectangle(cornerRadius: 10, style: .continuous).fill(Amber.wash)
                 .frame(width: 48, height: 48)
                 .overlay {
                     if building { ProgressView().controlSize(.small) } else {
-                        Image(systemName: "sparkles").font(.system(size: 18, weight: .semibold)).foregroundStyle(Amber.amber)
+                        Image(systemName: "sparkles").font(.system(size: 18, weight: .semibold)).foregroundStyle(Amber.ink)
                     }
                 }
             VStack(alignment: .leading, spacing: 3) {
@@ -443,6 +434,7 @@ struct DraftView: View {
                             Bubble(text: turn.text, mine: turn.mine, who: turn.who, typing: turn.fresh)
                                 .transition(turn.settled ? .identity : .incoming(mine: turn.mine))
                         }
+                        if store.changing[key] != nil { BuildStatus(text: store.doing[key] ?? "Starting") }
                         if let live = store.liveSpeech { Bubble(text: live, mine: true, live: true) }
                         Color.clear.frame(height: 12).id("end")
                     }
@@ -681,10 +673,8 @@ struct ToolView: View {
                 Bubble(text: live, mine: true, live: true)
                     .transition(.opacity)
             }
-            if let started = store.changing[slug] {
-                TimelineView(.periodic(from: .now, by: 1)) { context in
-                    Bubble(text: "Making that change. \(Int(context.date.timeIntervalSince(started))) seconds so far. You can keep talking to me.", mine: false)
-                }
+            if store.changing[slug] != nil {
+                BuildStatus(text: store.doing[slug] ?? "Making that change")
             }
             if tool.has_draft, store.changing[slug] == nil {
                 Bubble(text: "Only you can see this change. Publish it online when it's right, or put it back.", mine: false) {
@@ -730,7 +720,7 @@ struct ToolView: View {
             if tool.has_draft {
                 Button { Task { await store.keep(slug); await load() } } label: {
                     Label("Publish online", systemImage: "globe")
-                        .font(Amber.font(14, .bold)).foregroundStyle(Amber.amber)
+                        .font(Amber.font(14, .bold)).foregroundStyle(Amber.ink)
                         .frame(maxWidth: .infinity, minHeight: 44)
                         .contentShape(Rectangle())
                 }
@@ -863,7 +853,7 @@ struct Bubble<Extra: View>: View {
                     if live { Caret(color: .white) }
                 }
                 .padding(.horizontal, 14).padding(.vertical, 9)
-                .background(RoundedRectangle(cornerRadius: 18, style: .continuous).fill(Amber.amber.opacity(live ? 0.75 : 1)))
+                .background(RoundedRectangle(cornerRadius: 18, style: .continuous).fill(Amber.bubble.opacity(live ? 0.75 : 1)))
             }
         } else {
             VStack(alignment: .leading, spacing: 3) {
@@ -927,13 +917,15 @@ struct SafariSheet: UIViewControllerRepresentable {
     func updateUIViewController(_ controller: SFSafariViewController, context: Context) {}
 }
 
-/// The one talk bar, under every screen. What it does depends on where you
-/// are: at home it starts something new, inside an app it talks to that app.
+/// The one bar under every screen, shaped like Messages: a field with the
+/// microphone inside it. Hold the mic to talk, or type; you can switch
+/// mid-conversation (Caleb, 2026-09-27: "always hold to talk, bc maybe mid
+/// convo they might wanna switch to typing"). The bar sits on a faded
+/// material instead of a hard edge.
 struct TalkBar: View {
     @EnvironmentObject var store: ChatStore
     @Environment(\.titles) private var titles
     @State private var request = ""
-    @State private var pinMode: PinMode = .comment
     @FocusState private var focused: Bool
 
     /// The double-tapped spot, while this app is open.
@@ -941,79 +933,83 @@ struct TalkBar: View {
         guard let pin = store.pinTarget, store.route == .tool(pin.slug) else { return nil }
         return pin
     }
+    private var empty: Bool { request.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 10) {
+        VStack(alignment: .leading, spacing: 8) {
             if let pin {
-                VStack(alignment: .leading, spacing: 8) {
-                    HStack(spacing: 8) {
-                        Image(systemName: "mappin.circle.fill").font(.system(size: 16)).foregroundStyle(Amber.amber)
-                        Text("On \(pin.anchor.label)").font(Amber.font(15, .bold)).foregroundStyle(Amber.ink).lineLimit(1)
-                        Spacer(minLength: 4)
-                        Button { store.pinTarget = nil } label: {
-                            Image(systemName: "xmark").font(.system(size: 12, weight: .bold)).foregroundStyle(Amber.muted)
-                                .frame(width: 30, height: 30)
-                        }
-                        .accessibilityLabel("Drop the pin")
+                HStack(spacing: 6) {
+                    Image(systemName: "mappin").font(.system(size: 12, weight: .semibold)).foregroundStyle(Amber.muted)
+                    Text("About \(pin.anchor.label)").font(Amber.font(13, .bold)).foregroundStyle(Amber.muted).lineLimit(1)
+                    Spacer(minLength: 4)
+                    Button { store.pinTarget = nil } label: {
+                        Image(systemName: "xmark.circle.fill").font(.system(size: 16)).foregroundStyle(Amber.muted)
+                            .frame(width: 44, height: 28)
                     }
-                    Picker("What to do", selection: $pinMode) {
-                        Text("Comment here").tag(PinMode.comment)
-                        Text("Change it").tag(PinMode.change)
-                    }
-                    .pickerStyle(.segmented)
+                    .accessibilityLabel("Drop the pin")
                 }
-                .padding(12)
-                .background(RoundedRectangle(cornerRadius: 14, style: .continuous).fill(Amber.amberSoft))
+                .padding(.leading, 52)
                 .transition(.blurReplace)
             }
-            // The logo sits with the thing it names, not repeated at the top.
-            HStack(spacing: 12) {
-                EggSlot(rank: 5).frame(width: 30, height: 34)
-                HoldToTalk(label: "Hold to talk to Amber", onPress: { store.speaker.stop() }) { heard in send(heard) }
-                    .sharedTitle("pill", in: titles)
-            }
             HStack(alignment: .bottom, spacing: 10) {
-                // The same words everywhere: a placeholder that swaps on the way home
-                // was one of the things popping back abruptly.
-                TextField("Message Amber", text: $request, axis: .vertical)
-                    .font(Amber.font(18)).foregroundStyle(Amber.ink).lineLimit(1...3).focused($focused)
-                    .padding(12).frame(minHeight: 48).block()
-                    .onChange(of: focused) { _, isOn in if isOn { store.host?.expand() } }
-                Button("Send") {
-                    focused = false
-                    let text = request
-                    request = ""
-                    send(text)
+                EggSlot(rank: 5).frame(width: 28, height: 32).padding(.bottom, 8)
+                HStack(alignment: .bottom, spacing: 4) {
+                    TextField(store.liveSpeech != nil ? "Listening" : "Message Amber", text: $request, axis: .vertical)
+                        .font(Amber.font(17)).foregroundStyle(Amber.ink).lineLimit(1...5).focused($focused)
+                        .padding(.leading, 14).padding(.vertical, 11)
+                        .onChange(of: focused) { _, isOn in if isOn { store.host?.expand() } }
+                        .onSubmit { submit() }
+                    if empty {
+                        HoldToTalk(compact: true, onPress: { store.speaker.stop() }) { heard in send(heard) }
+                            .padding(4)
+                    } else {
+                        Button { submit() } label: {
+                            Image(systemName: "arrow.up").font(.system(size: 16, weight: .bold)).foregroundStyle(.white)
+                                .frame(width: 36, height: 36).background(Circle().fill(Amber.ink))
+                        }
+                        .accessibilityLabel("Send")
+                        .padding(4)
+                        .transition(.scale.combined(with: .opacity))
+                    }
                 }
-                .buttonStyle(BlockButton(primary: true))
-                .disabled(request.trimmingCharacters(in: .whitespaces).isEmpty)
+                .background(RoundedRectangle(cornerRadius: 22, style: .continuous).fill(Amber.sheet))
+                .overlay(RoundedRectangle(cornerRadius: 22, style: .continuous).strokeBorder(Amber.hairline, lineWidth: 1))
+                .sharedTitle("pill", in: titles)
+                .animation(.messageIn, value: empty)
             }
         }
-        .padding(16)
-        .background(Amber.paper)
-        .overlay(Rectangle().fill(Amber.hairline).frame(height: 1), alignment: .top)
+        .padding(.horizontal, 12).padding(.top, 8).padding(.bottom, 10)
+        .background(.bar)
         .animation(.reveal, value: store.pinTarget)
-        // Mic and box both ready: the box takes focus, and holding the pill
-        // talks about the same spot.
         .onChange(of: store.pinTarget) { _, pin in
-            if pin != nil { pinMode = .comment; focused = true }
+            if pin != nil { focused = true }
         }
     }
 
+    private func submit() {
+        let text = request
+        request = ""
+        send(text)
+    }
+
+    /// A pin takes your words as a comment on that spot, unless they ask for
+    /// a change ("make it bigger", "change this to blue"), which goes to Amber
+    /// scoped to that one element.
     private func send(_ text: String) {
         if let pin {
             let words = text.trimmingCharacters(in: .whitespacesAndNewlines)
             store.liveSpeech = nil
             guard !words.isEmpty else { return }
             store.pinTarget = nil
+            let asksForChange = words.range(
+                of: #"^(please\s+)?(make|change|move|add|remove|delete|put|turn|use|swap|replace|rename|fix|hide|show|center|align|resize|shrink|enlarge|bold|color|colour)\b|\b(make it|change it|should be|can you (make|change|move|add|remove))\b"#,
+                options: [.regularExpression, .caseInsensitive]) != nil
             Task {
-                switch pinMode {
-                case .comment:
-                    await store.dropComment(pin, words)
-                case .change:
-                    // Named precisely so the builder patches that one element.
+                if asksForChange {
                     await store.say(pin.slug, "Change only \(pin.anchor.label) (CSS selector \(pin.anchor.selector)) and leave everything else exactly as it is: \(words)",
                                     open: { store.host?.openInRealSafari($0) })
+                } else {
+                    await store.dropComment(pin, words)
                 }
             }
             return
@@ -1051,7 +1047,7 @@ struct ActivityTray: View {
         VStack(alignment: .leading, spacing: 0) {
             Button { withAnimation(.reveal) { open.toggle() } } label: {
                 HStack(spacing: 8) {
-                    Image(systemName: "clock.arrow.circlepath").font(.system(size: 13, weight: .semibold)).foregroundStyle(Amber.amber)
+                    Image(systemName: "clock.arrow.circlepath").font(.system(size: 13, weight: .semibold)).foregroundStyle(Amber.muted)
                     Text("Activity").font(Amber.font(15, .bold)).foregroundStyle(Amber.ink)
                     if !threads.isEmpty {
                         Text("\(threads.count) open \(threads.count == 1 ? "comment" : "comments")")
@@ -1113,7 +1109,7 @@ struct ActivityTray: View {
         }
         return HStack(alignment: .top, spacing: 10) {
             Image(systemName: icon).font(.system(size: 12, weight: .semibold))
-                .foregroundStyle(item.kind == "published" ? Amber.amber : Amber.muted)
+                .foregroundStyle(item.kind == "published" ? Amber.ink : Amber.muted)
                 .frame(width: 18).padding(.top, 2)
             Text(line).font(Amber.font(14)).foregroundStyle(Amber.body).fixedSize(horizontal: false, vertical: true)
             Spacer(minLength: 4)
@@ -1135,8 +1131,8 @@ struct ActivityTray: View {
                 Text(timeAgo(thread.created_at)).font(Amber.font(13)).foregroundStyle(Amber.muted)
                 Spacer()
                 Button { Task { await resolve(thread) } } label: {
-                    Image(systemName: "checkmark").font(.system(size: 13, weight: .bold)).foregroundStyle(Amber.amber)
-                        .frame(width: 32, height: 32).background(Circle().fill(Amber.amberSoft))
+                    Image(systemName: "checkmark").font(.system(size: 13, weight: .bold)).foregroundStyle(Amber.ink)
+                        .frame(width: 32, height: 32).background(Circle().fill(Amber.wash))
                 }
                 .accessibilityLabel("Resolve")
             }
@@ -1154,7 +1150,7 @@ struct ActivityTray: View {
             }
             HStack(spacing: 16) {
                 Button("Reply") { replyingTo = thread; focused = true }
-                    .font(Amber.font(14, .bold)).foregroundStyle(Amber.amber)
+                    .font(Amber.font(14, .bold)).foregroundStyle(Amber.ink)
                 if store.tool(slug)?.has_draft == false {
                     Button("Make this change") { Task { await store.say(slug, thread.text) } }
                         .font(Amber.font(14, .bold)).foregroundStyle(Amber.ink)
@@ -1252,24 +1248,6 @@ struct EggSlot: View {
     }
 }
 
-/// The first row on home: start a project without having to say anything.
-struct NewProjectRow: View {
-    var body: some View {
-        HStack(spacing: 14) {
-            RoundedRectangle(cornerRadius: 10, style: .continuous).fill(Amber.amber)
-                .frame(width: 48, height: 48)
-                .overlay(Image(systemName: "plus").font(.system(size: 20, weight: .bold)).foregroundStyle(.white))
-            Text("New project").font(Amber.font(18, .heavy)).foregroundStyle(Amber.ink)
-            Spacer(minLength: 0)
-        }
-        .padding(12)
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .background(RoundedRectangle(cornerRadius: 12, style: .continuous).fill(Amber.sheet))
-        .overlay(RoundedRectangle(cornerRadius: 12, style: .continuous)
-            .strokeBorder(Amber.amber.opacity(0.35), style: StrokeStyle(lineWidth: 1.5, dash: [6, 4])))
-        .contentShape(Rectangle())
-    }
-}
 
 enum Onboarding {
     /// Where the egg and title sit on every first-run step once iMessage
@@ -1321,6 +1299,26 @@ struct RetypingText: View {
 /// run, and the headline, which deletes and retypes whenever the screen changes.
 struct TopBar: View {
     @EnvironmentObject var store: ChatStore
+    @State private var editing = false
+    @State private var newName = ""
+    @FocusState private var nameFocused: Bool
+
+    /// What a rename applies to: the open app or the draft being talked out.
+    private var renameKey: String? {
+        switch store.route {
+        case .tool(let slug): slug
+        case .draft(let key): key
+        case .home: nil
+        }
+    }
+
+    private func commitRename() {
+        guard editing else { return }
+        editing = false
+        let name = newName.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard let key = renameKey, !name.isEmpty, name != title else { return }
+        Task { await store.rename(key, to: name) }
+    }
 
     private var title: String {
         if store.building != nil { return "Making it" }
@@ -1335,14 +1333,42 @@ struct TopBar: View {
         HStack(spacing: 12) {
             if store.route != .home {
                 Button { store.goHome() } label: {
-                    Image(systemName: "chevron.left").font(.system(size: 16, weight: .bold)).foregroundStyle(Amber.ink)
-                        .frame(width: 36, height: 36).background(Circle().fill(Amber.wash))
+                    Image(systemName: "chevron.left").font(.system(size: 17, weight: .semibold)).foregroundStyle(Amber.ink)
+                        .frame(width: 44, height: 44).background(Circle().fill(Amber.wash))
                 }
                 .accessibilityLabel("Everything in this chat")
                 .transition(.blurReplace)
             }
-            HeadlineSlot(rank: 2, text: title, size: 26)
-                .frame(maxWidth: .infinity)
+            // Double-tap the name to change it (Caleb, 2026-09-27).
+            ZStack(alignment: .leading) {
+                HeadlineSlot(rank: 2, text: editing ? "" : title, size: 26)
+                if editing {
+                    TextField("Name", text: $newName)
+                        .font(Amber.font(26, .heavy)).foregroundStyle(Amber.ink)
+                        .focused($nameFocused)
+                        .submitLabel(.done)
+                        .onSubmit { commitRename() }
+                }
+            }
+            .frame(maxWidth: .infinity)
+            .contentShape(Rectangle())
+            .onTapGesture(count: 2) {
+                guard renameKey != nil, !editing else { return }
+                newName = title
+                editing = true
+                nameFocused = true
+                store.host?.expand()
+            }
+            .onChange(of: nameFocused) { _, on in if !on { commitRename() } }
+            if store.route == .home {
+                Button { store.startNewProject() } label: {
+                    Image(systemName: "plus").font(.system(size: 18, weight: .semibold)).foregroundStyle(Amber.ink)
+                        .frame(width: 44, height: 44).background(Circle().fill(Amber.wash))
+                }
+                .accessibilityLabel("New project")
+                .onGeometryChange(for: CGRect.self) { $0.frame(in: .named("stage")) } action: { store.rowFrames["__plus"] = $0 }
+                .transition(.blurReplace)
+            }
         }
         .frame(height: 44)
         .padding(.horizontal, 20).padding(.top, 16).padding(.bottom, 10)
@@ -1432,12 +1458,12 @@ struct ProjectCard: View {
     var body: some View {
         Button { store.openProject(key) } label: {
             HStack(spacing: 14) {
-                RoundedRectangle(cornerRadius: 10, style: .continuous).fill(Amber.amberSoft)
+                RoundedRectangle(cornerRadius: 10, style: .continuous).fill(Amber.wash)
                     .frame(width: 44, height: 44)
                     .overlay {
                         if building { ProgressView().controlSize(.small) } else {
                             Image(systemName: store.tool(key) == nil ? "sparkles" : "square.grid.2x2")
-                                .font(.system(size: 17, weight: .semibold)).foregroundStyle(Amber.amber)
+                                .font(.system(size: 17, weight: .semibold)).foregroundStyle(Amber.ink)
                         }
                     }
                 VStack(alignment: .leading, spacing: 2) {
@@ -1483,7 +1509,7 @@ struct HomeActivityTray: View {
         VStack(alignment: .leading, spacing: 0) {
             Button { withAnimation(.reveal) { open.toggle() } } label: {
                 HStack(spacing: 8) {
-                    Image(systemName: "clock.arrow.circlepath").font(.system(size: 13, weight: .semibold)).foregroundStyle(Amber.amber)
+                    Image(systemName: "clock.arrow.circlepath").font(.system(size: 13, weight: .semibold)).foregroundStyle(Amber.muted)
                     Text("Activity").font(Amber.font(15, .bold)).foregroundStyle(Amber.ink)
                     if let now = building.first {
                         ProgressView().controlSize(.mini)
@@ -1508,7 +1534,7 @@ struct HomeActivityTray: View {
                         }
                         ForEach(store.board?.ideas ?? []) { idea in
                             HStack(alignment: .top, spacing: 10) {
-                                Image(systemName: "lightbulb").font(.system(size: 12, weight: .semibold)).foregroundStyle(Amber.amber).frame(width: 18)
+                                Image(systemName: "lightbulb").font(.system(size: 12, weight: .semibold)).foregroundStyle(Amber.muted).frame(width: 18)
                                 Text(idea.description).font(Amber.font(14)).foregroundStyle(Amber.body)
                             }
                             .padding(.vertical, 4)
@@ -1552,7 +1578,7 @@ struct HomeActivityTray: View {
         return Button { openProject(event.slug) } label: {
             HStack(alignment: .top, spacing: 10) {
                 Image(systemName: icon).font(.system(size: 12, weight: .semibold))
-                    .foregroundStyle(event.kind == "published" ? Amber.amber : Amber.muted).frame(width: 18).padding(.top, 2)
+                    .foregroundStyle(event.kind == "published" ? Amber.ink : Amber.muted).frame(width: 18).padding(.top, 2)
                 Text(line).font(Amber.font(14)).foregroundStyle(Amber.body).multilineTextAlignment(.leading)
                     .fixedSize(horizontal: false, vertical: true)
                 Spacer(minLength: 4)
@@ -1582,5 +1608,52 @@ struct HomeActivityTray: View {
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
+    }
+}
+
+/// While Amber builds: one line that says what it is doing right now and
+/// updates in place, instead of a new message for every step (Caleb's
+/// screenshot, 2026-09-27: ten "Adding the..." bubbles).
+struct BuildStatus: View {
+    let text: String
+    var body: some View {
+        VStack(alignment: .leading, spacing: 3) {
+            Text("Amber").font(Amber.font(12)).foregroundStyle(Amber.muted).padding(.leading, 14)
+            HStack(spacing: 10) {
+                ProgressView().controlSize(.small)
+                Text(text).font(Amber.font(16)).foregroundStyle(Amber.body)
+                    .contentTransition(.opacity)
+                    .animation(.reveal, value: text)
+            }
+            .padding(.horizontal, 14).padding(.vertical, 10)
+            .background(RoundedRectangle(cornerRadius: 18, style: .continuous).fill(Amber.iMessageGrey.opacity(0.6)))
+        }
+        .transition(.incoming(mine: false))
+    }
+}
+
+/// On an empty home, a few things to start with, one tap each.
+struct StarterChips: View {
+    @EnvironmentObject var store: ChatStore
+    private let starters: [(String, String)] = [
+        ("A sign-up sheet for an event", "Make a sign-up sheet for our next event"),
+        ("A poll for the group", "Make a poll so the group can vote"),
+        ("Plan the next hangout", "Build a page to plan our next hangout"),
+        ("Split costs between us", "Make a tracker to split costs between us"),
+    ]
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text("Start with one").font(Amber.font(13, .bold)).foregroundStyle(Amber.muted)
+            ForEach(starters, id: \.0) { label, prompt in
+                Button { Task { await store.homeSay(prompt) } } label: {
+                    Text(label).font(Amber.font(15, .bold)).foregroundStyle(Amber.ink)
+                        .padding(.horizontal, 14).padding(.vertical, 10)
+                        .background(Capsule().fill(Amber.sheet))
+                        .overlay(Capsule().strokeBorder(Amber.hairline, lineWidth: 1))
+                }
+                .buttonStyle(.plain)
+            }
+        }
+        .transition(.blurReplace)
     }
 }
