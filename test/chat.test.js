@@ -104,8 +104,15 @@ test("pins keep their anchor, and activity separates edits, publishes and shares
   assert.equal((await call(`/api/tools/${slug}/shared`, { method: "POST", chat: ruth.token, body: {} })).status, 200);
   const activity = (await call(`/api/tools/${slug}/activity`, { chat: stan.token })).json.activity;
   assert.deepEqual(activity.map((a) => [a.kind, a.name]), [["shared", "Ruth"]]);
+  const renamed = await call(`/api/tools/${slug}/rename`, { method: "POST", chat: stan.token, body: { title: "Church rides" } });
+  assert.equal(renamed.status, 200);
+  const view = (await call(`/api/chats/${stan.chat}`, { chat: ruth.token })).json;
+  assert.equal(view.tools.find((t) => t.slug === slug).title, "Church rides");
+  assert.equal(view.tools.find((t) => t.slug === slug).version, 1, "a rename is not a new version");
+  const afterRename = (await call(`/api/tools/${slug}/activity`, { chat: stan.token })).json.activity;
+  assert.deepEqual(afterRename.map((a) => a.kind), ["shared", "renamed"]);
   const board = (await call(`/api/chats/${stan.chat}/board`, { chat: stan.token })).json;
-  assert.deepEqual(board.activity.map((a) => [a.kind, a.name, a.slug]), [["shared", "Ruth", slug]], "home sees every project's activity");
+  assert.deepEqual(board.activity.map((a) => [a.kind, a.name, a.slug]), [["shared", "Ruth", slug], ["renamed", "Stan", slug]], "home sees every project's activity");
   const other = await startChat();
   assert.equal((await call(`/api/tools/${slug}/activity`, { chat: other.ruth.token })).status, 404);
 });

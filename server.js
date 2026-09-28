@@ -1790,6 +1790,19 @@ app.get("/api/tools/:slug/activity", async (c) => {
   return c.json({ activity: rows });
 });
 
+// A new name, and nothing else: no new version, since nothing on the page
+// changed. Anyone in the chat can rename (Caleb, 2026-09-27: double-tap the
+// title to edit it).
+app.post("/api/tools/:slug/rename", async (c) => {
+  const owner = await requireOwner(c);
+  const tool = await ownedTool(owner, c.req.param("slug"));
+  const body = await c.req.json().catch(() => ({}));
+  const title = requireText(body.title, "name", 80).trim();
+  await pool.query("update tools set title = $2, updated_at = now() where id = $1", [tool.id, title]);
+  await recordActivity(owner, c.req.param("slug"), "renamed", title);
+  return c.json({ title });
+});
+
 // The iMessage app says when a bubble for this app was sent to the chat.
 app.post("/api/tools/:slug/shared", async (c) => {
   const owner = await requireOwner(c);
