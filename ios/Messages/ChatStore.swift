@@ -43,6 +43,8 @@ struct Turn: Identifiable, Equatable, Codable {
     var who: String? = nil
     /// Said just now, so it types itself out instead of appearing whole.
     var fresh = false
+    /// A project card in the home chat, by draft key or app slug.
+    var project: String? = nil
 }
 
 /// What is on this phone and not yet in the cloud: the conversation, apps not
@@ -97,6 +99,18 @@ final class ChatStore: ObservableObject {
     /// Where each app's row sits on home, so closing one shrinks it back
     /// into its own row, even one made after it was opened.
     var rowFrames: [String: CGRect] = [:]
+    /// Which row or card the open project came from.
+    var openedRow: String?
+
+    /// Opens a project from a card in the home chat.
+    func openProject(_ key: String) {
+        openedRow = "card-\(key)"
+        revealFrom = rowFrames["card-\(key)"] ?? .zero
+        host?.expand()
+        withAnimation(.reveal) {
+            if drafts.contains(where: { $0.id == key }) { route = .draft(key) } else if tool(key) != nil { route = .tool(key) }
+        }
+    }
 
     func goHome() {
         host?.view.endEditing(true)
@@ -105,7 +119,10 @@ final class ChatStore: ObservableObject {
         case .draft(let key): key
         case .home: nil
         }
-        if let id, let frame = rowFrames[id] { revealFrom = frame }
+        // Back into whatever it was opened from: its card in the chat or its
+        // row in the list.
+        let candidates = [openedRow, id.map { "card-\($0)" }, id].compactMap { $0 }
+        if let frame = candidates.lazy.compactMap({ self.rowFrames[$0] }).first { revealFrom = frame }
         // One render with the new target first, so the closing card shrinks
         // into the right row.
         objectWillChange.send()
@@ -152,12 +169,14 @@ final class ChatStore: ObservableObject {
     /// itself (Caleb: "it should literally feel like iron man genui").
     private var lastNarration = Date.distantPast
     private var lastNarrated = ""
-    func narrate(_ doing: String) {
-        guard doing != lastNarrated, Date().timeIntervalSince(lastNarration) > 5,
-              !speaker.isSpeaking, let token = session?.token else { return }
+    /// Said and shown: anything Amber says out loud is also a message
+    /// (Caleb, 2026-09-27: "everything amber says should show up on screen
+    /// as a text").
+    func narrate(_ doing: String, in key: String) {
+        guard doing != lastNarrated, Date().timeIntervalSince(lastNarration) > 5, !speaker.isSpeaking else { return }
         lastNarration = Date()
         lastNarrated = doing
-        Task { await speaker.say(doing + ".", token: token) }
+        reply(key, doing + ".")
     }
 
     /// Amber opens a tool by saying what it is, out loud, once.
@@ -383,9 +402,7 @@ final class ChatStore: ObservableObject {
         let subject = slug.isEmpty ? "that" : (tool(slug)?.title ?? "it")
         let filler = Task { [weak self] in
             try? await Task.sleep(for: .seconds(2))
-            if !answered, let self, let token = self.session?.token {
-                await self.speaker.say("Let me look at \(subject).", token: token)
-            }
+            if !answered, let self { self.reply(slug, "Let me look at \(subject).") }
         }
         do {
             struct Action: Decodable { let type: String; let slug: String?; let request: String? }
@@ -437,7 +454,7 @@ final class ChatStore: ObservableObject {
         do {
             let result = try await API.build(request: request, chat: session.chat, slug: nil, token: session.token) { [weak self] _, _, html, doing in
                 if let html { self?.liveHTML[draftKey] = html }
-                if let doing { self?.doing[draftKey] = doing; self?.narrate(doing) }
+                if let doing { self?.doing[draftKey] = doing; self?.narrate(doing, in: draftKey) }
             }
             liveHTML[draftKey] = nil
             doing[draftKey] = nil
@@ -452,6 +469,10 @@ final class ChatStore: ObservableObject {
                 talk[result.slug] = (talk[draftKey] ?? []) + (talk[result.slug] ?? [])
                 talk[draftKey] = nil
                 drafts.removeAll { $0.id == draftKey }
+                if var home = talk[""] {
+                    for index in home.indices where home[index].project == draftKey { home[index].project = result.slug }
+                    talk[""] = home
+                }
                 unpublished.insert(result.slug)
                 if route == .draft(draftKey) { route = .tool(result.slug) }
             }
@@ -481,15 +502,23 @@ final class ChatStore: ObservableObject {
             of: #"\b(make|build|create|start|need|want|set up|let'?s do)\b.*\b(app|list|tracker|sheet|page|site|website|tool|sign.?up|calendar|schedule|poll|board|game)\b"#,
             options: [.regularExpression, .caseInsensitive]) != nil
         if aboutNewApp {
-            let draft = newDraft(title: "New app")
-            revealFrom = .zero
+            // What you said lands in the home chat, a card for the new project
+            // lands under it, and the card grows into the project (Caleb,
+            // 2026-09-27: "a seamless transition when you switch to being on
+            // a project").
+            let draft = newDraft(title: "New project")
+            withAnimation(.messageIn) {
+                talk["", default: []].append(Turn(text: words, mine: true))
+                talk["", default: []].append(Turn(text: "", mine: false, project: draft.id))
+            }
+            try? await Task.sleep(for: .milliseconds(700))
+            openedRow = "card-\(draft.id)"
+            revealFrom = rowFrames[openedRow ?? ""] ?? .zero
             withAnimation(.reveal) { route = .draft(draft.id) }
             await say(draft.id, words)
             return
         }
         await say("", words)
-        let answer = talk[""]?.last(where: { !$0.mine })?.text
-        withAnimation(.easeOut(duration: 0.25)) { caption = answer }
     }
 
     func catchUp(_ slug: String) async -> String? {
@@ -513,7 +542,7 @@ final class ChatStore: ObservableObject {
         do {
             _ = try await API.build(request: request, chat: session.chat, slug: slug, token: session.token) { [weak self] _, _, html, doing in
                 if let html { self?.liveHTML[slug] = html }
-                if let doing { self?.doing[slug] = doing; self?.narrate(doing) }
+                if let doing { self?.doing[slug] = doing; self?.narrate(doing, in: slug) }
             }
             liveHTML[slug] = nil
             doing[slug] = nil

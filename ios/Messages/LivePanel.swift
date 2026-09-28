@@ -42,12 +42,7 @@ struct LivePanel: View {
             // corner (Caleb: "there should just be the little X in the corner").
             if expanded {
                 HStack(spacing: 8) {
-                    if building {
-                        Text(status).font(Amber.font(13, .bold)).foregroundStyle(.white)
-                            .padding(.horizontal, 10).frame(height: 30)
-                            .background(Capsule().fill(Amber.amber))
-                            .transition(.opacity)
-                    } else if onPin != nil {
+                    if !building, onPin != nil {
                         Text("Double tap anything to comment").font(Amber.font(13, .bold)).foregroundStyle(Amber.ink)
                             .padding(.horizontal, 10).frame(height: 30)
                             .background(Capsule().fill(.ultraThinMaterial))
@@ -61,6 +56,22 @@ struct LivePanel: View {
                     cornerButton("xmark", label: "Close preview") { close() }
                 }
                 .padding(10)
+                // What is being built right now sits at the bottom, so it never
+                // covers the app's own title (Caleb's screenshot, 2026-09-27).
+                if building {
+                    VStack {
+                        Spacer()
+                        Text(status).font(Amber.font(13, .bold)).foregroundStyle(.white)
+                            .lineLimit(1)
+                            .padding(.horizontal, 12).frame(height: 30)
+                            .background(Capsule().fill(Amber.amber))
+                            .contentTransition(.opacity)
+                            .animation(.reveal, value: status)
+                            .padding(12)
+                    }
+                    .frame(height: height)
+                    .allowsHitTesting(false)
+                }
             } else {
                 // Opaque, so the loaded app underneath stays hidden until the
                 // mask grows; nothing about the app itself ever fades.
@@ -157,6 +168,12 @@ struct WebFrame: UIViewRepresentable {
     final class Coordinator: NSObject, WKScriptMessageHandler, WKNavigationDelegate {
         var lastLength = 0
         var loadedURL: URL?
+        /// The streaming page is loaded once; after that, each new piece of
+        /// the app is handed to it and eases in, instead of the whole page
+        /// reloading and flashing.
+        var shellReady = false
+        var shellLoading = false
+        var latestHTML: String?
         weak var view: WKWebView?
         /// The app's own frame, which is where the pin layer lives.
         var frame: WKFrameInfo?
@@ -182,6 +199,16 @@ struct WebFrame: UIViewRepresentable {
         }
 
         func webView(_ webView: WKWebView, didStartProvisionalNavigation navigation: WKNavigation!) { frame = nil }
+
+        func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
+            if shellLoading { shellLoading = false; shellReady = true; stream() }
+        }
+
+        func stream() {
+            guard shellReady, let view, let html = latestHTML,
+                  let data = try? JSONEncoder().encode(html), let json = String(data: data, encoding: .utf8) else { return }
+            view.evaluateJavaScript("window.__amberStream(\(json))") { _, _ in }
+        }
     }
 
     /// A stand-in for Amber's data bridge (public/bridge.js), so a page that
@@ -194,6 +221,49 @@ struct WebFrame: UIViewRepresentable {
     reachOut:async()=>({}),onChange:()=>{}};</script>
     """
     func makeCoordinator() -> Coordinator { Coordinator() }
+
+    /// The page a build streams into. It keeps what is already on screen and
+    /// only adds or updates what changed, so each new piece eases in: rising,
+    /// sharpening out of a blur (Caleb, 2026-09-27: "things should smoothly
+    /// animate as they are added, some iron man genUI").
+    static let streamShell = previewBridge + #"""
+    <!doctype html><html><head><meta name="viewport" content="width=device-width, initial-scale=1">
+    <style id="__amberCSS"></style>
+    <style>
+    @keyframes __amberIn { from { opacity: 0; transform: translateY(14px) scale(.98); filter: blur(8px); } to { opacity: 1; transform: none; filter: none; } }
+    .__amberNew { animation: __amberIn .6s cubic-bezier(.2,.9,.1,1) both; }
+    </style></head><body></body>
+    <script>
+    window.__amberStream = function (src) {
+      var doc = new DOMParser().parseFromString(src, 'text/html');
+      document.getElementById('__amberCSS').textContent =
+        Array.prototype.map.call(doc.querySelectorAll('style'), function (s) { return s.textContent; }).join(' ');
+      doc.querySelectorAll('link[rel="stylesheet"]').forEach(function (l) {
+        if (!document.querySelector('link[href="' + l.getAttribute('href') + '"]')) document.head.appendChild(l.cloneNode());
+      });
+      document.body.className = doc.body.className;
+      morph(document.body, doc.body, 0);
+      function morph(into, from, depth) {
+        var have = into.children, want = Array.prototype.filter.call(from.children, function (c) { return c.tagName !== 'SCRIPT' && c.tagName !== 'STYLE' && c.tagName !== 'LINK'; });
+        for (var i = 0; i < want.length; i++) {
+          var next = want[i], now = have[i];
+          if (!now || now.tagName !== next.tagName) {
+            var made = document.importNode(next, true);
+            made.querySelectorAll('script').forEach(function (s) { s.remove(); });
+            made.classList.add('__amberNew');
+                        if (now) into.replaceChild(made, now); else into.appendChild(made);
+            continue;
+          }
+          var wasNew = now.classList.contains('__amberNew');
+          Array.prototype.forEach.call(next.attributes, function (a) { now.setAttribute(a.name, a.value); });
+          if (wasNew) now.classList.add('__amberNew');
+          if (next.children.length === 0) { if (now.textContent !== next.textContent) now.textContent = next.textContent; }
+          else morph(now, next, depth + 1);
+        }
+      }
+    };
+    </script></html>
+    """#
 
     func makeUIView(context: Context) -> WKWebView {
         let config = WKWebViewConfiguration()
@@ -216,10 +286,20 @@ struct WebFrame: UIViewRepresentable {
         context.coordinator.pinsJSON = pinsJSON
         context.coordinator.push()
         if let html {
-            guard html.count - context.coordinator.lastLength > 600 || context.coordinator.lastLength == 0 else { return }
-            context.coordinator.lastLength = html.count
-            view.loadHTMLString(Self.previewBridge + html, baseURL: API.base)
+            let coordinator = context.coordinator
+            // About a line of markup at a time: small enough that pieces
+            // arrive one by one, and nothing reloads, so it costs little.
+            guard html.count - coordinator.lastLength > 120 || coordinator.lastLength == 0 else { return }
+            coordinator.lastLength = html.count
+            coordinator.latestHTML = html
+            if !coordinator.shellReady && !coordinator.shellLoading {
+                coordinator.shellLoading = true
+                view.loadHTMLString(Self.streamShell, baseURL: API.base)
+            } else {
+                coordinator.stream()
+            }
         } else if let url, url != context.coordinator.loadedURL {
+            context.coordinator.shellReady = false
             context.coordinator.loadedURL = url
             view.load(URLRequest(url: url))
         }

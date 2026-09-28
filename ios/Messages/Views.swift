@@ -275,39 +275,43 @@ struct HomeView: View {
 
     var body: some View {
         VStack(spacing: 0) {
+            ScrollViewReader { proxy in
             ScrollView {
                 VStack(alignment: .leading, spacing: 20) {
                     ErrorLine()
                     apps
                     boardSection
+                    // Home is a chat too: what people asked Amber here, its
+                    // answers, and a card for every project started from it.
+                    VStack(alignment: .leading, spacing: 12) {
+                        ForEach(store.talk[""] ?? []) { turn in
+                            if let key = turn.project {
+                                ProjectCard(key: key).transition(.incoming(mine: false))
+                            } else {
+                                Bubble(text: turn.text, mine: turn.mine, who: turn.who, typing: turn.fresh)
+                                    .transition(.incoming(mine: turn.mine))
+                            }
+                        }
+                        if let live = store.liveSpeech, store.route == .home { Bubble(text: live, mine: true, live: true) }
+                        Color.clear.frame(height: 12).id("end")
+                    }
+                    .animation(.messageIn, value: store.talk[""]?.count ?? 0)
                 }
                 .padding(20)
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .animation(.reveal, value: store.drafts)
             }
+            .defaultScrollAnchor(.bottom)
             .scrollDismissesKeyboard(.interactively)
             .contentShape(Rectangle())
             .onTapGesture { store.host?.view.endEditing(true) }
-            if let caption = store.caption {
-                HStack(alignment: .top, spacing: 10) {
-                    Image("AmberLogo").resizable().scaledToFit().frame(width: 16, height: 18).padding(.top, 3)
-                    TypedText(text: caption, animate: true)
-                    Button { withAnimation(.reveal) { store.caption = nil } } label: {
-                        Image(systemName: "xmark").font(.system(size: 12, weight: .bold)).foregroundStyle(Amber.muted)
-                    }
-                }
-                .padding(14)
-                .background(RoundedRectangle(cornerRadius: 18, style: .continuous).fill(Amber.sheet))
-                .overlay(RoundedRectangle(cornerRadius: 18, style: .continuous).strokeBorder(Amber.hairline, lineWidth: 1))
-                .padding(.horizontal, 16).padding(.bottom, 8)
-                .transition(.blurReplace)
+            .onChange(of: store.liveSpeech) { _, _ in proxy.scrollTo("end", anchor: .bottom) }
+            .onChange(of: store.talk[""]?.count ?? 0) { _, _ in
+                DispatchQueue.main.async { withAnimation(.messageIn) { proxy.scrollTo("end", anchor: .bottom) } }
             }
-            if let live = store.liveSpeech {
-                Bubble(text: live, mine: true, live: true).padding(.horizontal, 16).padding(.bottom, 8)
             }
         }
         .background(Amber.paper.ignoresSafeArea())
-        .animation(.reveal, value: store.caption)
         .task {
             await store.refresh()
             await store.loadBoard()
@@ -327,7 +331,7 @@ struct HomeView: View {
                 .buttonStyle(.plain)
                 .onGeometryChange(for: CGRect.self) { $0.frame(in: .named("stage")) } action: { frames["__new"] = $0 }
             ForEach(store.drafts) { draft in
-                Button { store.revealFrom = frames[draft.id] ?? .zero; withAnimation(.reveal) { store.route = .draft(draft.id) }; store.host?.expand() } label: {
+                Button { store.openedRow = draft.id; store.revealFrom = frames[draft.id] ?? .zero; withAnimation(.reveal) { store.route = .draft(draft.id) }; store.host?.expand() } label: {
                     DraftRow(draft: draft, building: store.changing[draft.id] != nil, doing: store.doing[draft.id])
                 }
                 .buttonStyle(.plain)
@@ -335,7 +339,7 @@ struct HomeView: View {
                 .transition(.blurReplace)
             }
             ForEach(store.overview?.tools ?? []) { tool in
-                Button { store.revealFrom = frames[tool.slug] ?? .zero; withAnimation(.reveal) { store.route = .tool(tool.slug) }; store.host?.expand() } label: {
+                Button { store.openedRow = tool.slug; store.revealFrom = frames[tool.slug] ?? .zero; withAnimation(.reveal) { store.route = .tool(tool.slug) }; store.host?.expand() } label: {
                     AppRow(tool: tool, unshared: store.unpublished.contains(tool.slug))
                 }
                 .buttonStyle(.plain)
@@ -439,7 +443,20 @@ struct DraftView: View {
     var body: some View {
         VStack(spacing: 0) {
             VStack(alignment: .leading, spacing: 12) {
-                if store.changing[key] != nil {
+                // The preview's place is held from the start, so when building
+                // begins it appears where the space already was instead of
+                // shoving the conversation down (the jump, 2026-09-27).
+                if store.changing[key] == nil {
+                    HStack(spacing: 10) {
+                        Image(systemName: "eye").font(.system(size: 14, weight: .semibold)).foregroundStyle(Amber.muted)
+                        Text("The preview shows up here while Amber builds").font(Amber.font(14)).foregroundStyle(Amber.muted)
+                        Spacer(minLength: 0)
+                    }
+                    .padding(.horizontal, 16).frame(height: 60)
+                    .overlay(RoundedRectangle(cornerRadius: 30, style: .continuous)
+                        .strokeBorder(Amber.hairline, style: StrokeStyle(lineWidth: 1.5, dash: [5, 4])))
+                    .transition(.blurReplace)
+                } else {
                     LivePanel(slug: nil, buildKey: key, expanded: $watching)
                         .transition(.blurReplace)
                 }
@@ -945,7 +962,9 @@ struct TalkBar: View {
                     .sharedTitle("pill", in: titles)
             }
             HStack(alignment: .bottom, spacing: 10) {
-                TextField(store.route == .home ? "Or type what the chat needs" : "Or type it", text: $request, axis: .vertical)
+                // The same words everywhere: a placeholder that swaps on the way home
+                // was one of the things popping back abruptly.
+                TextField("Message Amber", text: $request, axis: .vertical)
                     .font(Amber.font(18)).foregroundStyle(Amber.ink).lineLimit(1...3).focused($focused)
                     .padding(12).frame(minHeight: 48).block()
                     .onChange(of: focused) { _, isOn in if isOn { store.host?.expand() } }
@@ -1308,6 +1327,7 @@ struct TopBar: View {
                         .frame(width: 36, height: 36).background(Circle().fill(Amber.wash))
                 }
                 .accessibilityLabel("Everything in this chat")
+                .transition(.blurReplace)
             }
             HeadlineSlot(rank: 2, text: title, size: 26)
                 .frame(maxWidth: .infinity)
@@ -1376,5 +1396,47 @@ struct HeadlineSlot: View {
             .accessibilityElement()
             .accessibilityLabel(text)
             .accessibilityAddTraits(.isHeader)
+    }
+}
+
+/// A project in the home chat. Tapping it grows it into the project; closing
+/// the project shrinks it back into this card.
+struct ProjectCard: View {
+    @EnvironmentObject var store: ChatStore
+    let key: String
+
+    private var title: String {
+        store.drafts.first { $0.id == key }?.title ?? store.tool(key)?.title ?? "Project"
+    }
+    private var building: Bool { store.changing[key] != nil }
+
+    var body: some View {
+        Button { store.openProject(key) } label: {
+            HStack(spacing: 14) {
+                RoundedRectangle(cornerRadius: 10, style: .continuous).fill(Amber.amberSoft)
+                    .frame(width: 44, height: 44)
+                    .overlay {
+                        if building { ProgressView().controlSize(.small) } else {
+                            Image(systemName: store.tool(key) == nil ? "sparkles" : "square.grid.2x2")
+                                .font(.system(size: 17, weight: .semibold)).foregroundStyle(Amber.amber)
+                        }
+                    }
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(title).font(Amber.font(17, .heavy)).foregroundStyle(Amber.ink)
+                        .fixedSize(horizontal: false, vertical: true)
+                    Text(building ? (store.doing[key] ?? "Building") : "Tap to open")
+                        .font(Amber.font(14)).foregroundStyle(Amber.muted).lineLimit(1)
+                }
+                Spacer(minLength: 0)
+                Image(systemName: "chevron.right").font(.system(size: 14, weight: .semibold)).foregroundStyle(Amber.muted)
+            }
+            .padding(12)
+            .background(RoundedRectangle(cornerRadius: 12, style: .continuous).fill(Amber.sheet))
+            .overlay(RoundedRectangle(cornerRadius: 12, style: .continuous).strokeBorder(Amber.hairline, lineWidth: 1.5))
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .padding(.trailing, 40)
+        .onGeometryChange(for: CGRect.self) { $0.frame(in: .named("stage")) } action: { store.rowFrames["card-\(key)"] = $0 }
     }
 }

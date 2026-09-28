@@ -13,10 +13,56 @@ final class Listener: ObservableObject {
     @Published var problem: String?
 
     private let engine = AVAudioEngine()
-    private var request: SFSpeechAudioBufferRecognitionRequest?
+    private let feed = Feed()
     private var task: SFSpeechRecognitionTask?
     private let recognizer = SFSpeechRecognizer(locale: Locale(identifier: "en-US"))
     private var wantsToListen = false
+    /// Everything already heard. The on-device recognizer ends its task
+    /// after a pause or about a minute, and each new stretch comes back on its
+    /// own, so only the last chunk of a long message was being sent (Caleb,
+    /// 2026-09-27). Finished stretches are kept here and a fresh task picks up.
+    private var kept = ""
+    private var current = ""
+
+    /// The audio tap runs off the main thread; it feeds whichever request is
+    /// live right now.
+    private final class Feed: @unchecked Sendable {
+        private let lock = NSLock()
+        private var request: SFSpeechAudioBufferRecognitionRequest?
+        func set(_ next: SFSpeechAudioBufferRecognitionRequest?) { lock.lock(); request = next; lock.unlock() }
+        func append(_ buffer: AVAudioPCMBuffer) { lock.lock(); request?.append(buffer); lock.unlock() }
+        func end() { lock.lock(); request?.endAudio(); lock.unlock() }
+    }
+
+    private func joined() -> String {
+        [kept, current].map { $0.trimmingCharacters(in: .whitespaces) }.filter { !$0.isEmpty }.joined(separator: " ")
+    }
+
+    /// A new recognition task on the same running microphone.
+    private func nextStretch() {
+        let request = SFSpeechAudioBufferRecognitionRequest()
+        request.shouldReportPartialResults = true
+        if recognizer?.supportsOnDeviceRecognition == true { request.requiresOnDeviceRecognition = true }
+        feed.set(request)
+        task = recognizer?.recognitionTask(with: request) { result, error in
+            let words = result?.bestTranscription.formattedString
+            let ended = (result?.isFinal ?? false) || error != nil
+            Task { @MainActor in
+                if let words {
+                    // A transcript that suddenly shrinks is a new stretch
+                    // starting inside the same task: keep what came before.
+                    if !self.current.isEmpty, words.count < self.current.count / 2 { self.kept = self.joined(); }
+                    self.current = words
+                    self.text = self.joined()
+                }
+                if ended, self.wantsToListen, self.isListening {
+                    self.kept = self.joined()
+                    self.current = ""
+                    self.nextStretch()
+                }
+            }
+        }
+    }
 
     func start() {
         wantsToListen = true
@@ -45,23 +91,19 @@ final class Listener: ObservableObject {
             let session = AVAudioSession.sharedInstance()
             try session.setCategory(.playAndRecord, mode: .default, options: [.defaultToSpeaker, .allowBluetoothHFP, .duckOthers])
             try session.setActive(true, options: .notifyOthersOnDeactivation)
-            let request = SFSpeechAudioBufferRecognitionRequest()
-            request.shouldReportPartialResults = true
-            if recognizer?.supportsOnDeviceRecognition == true { request.requiresOnDeviceRecognition = true }
-            self.request = request
             let input = engine.inputNode
             input.removeTap(onBus: 0)
+            let feed = self.feed
             input.installTap(onBus: 0, bufferSize: 1024, format: input.outputFormat(forBus: 0)) { buffer, _ in
-                request.append(buffer)
+                feed.append(buffer)
             }
             engine.prepare()
             try engine.start()
             text = ""
+            kept = ""
+            current = ""
             isListening = true
-            task = recognizer?.recognitionTask(with: request) { result, _ in
-                guard let words = result?.bestTranscription.formattedString else { return }
-                Task { @MainActor in self.text = words }
-            }
+            nextStretch()
         } catch {
             problem = "The microphone didn't start. Try again."
             isListening = false
@@ -73,14 +115,15 @@ final class Listener: ObservableObject {
     func stop() async -> String {
         wantsToListen = false
         guard isListening else { return "" }
-        request?.endAudio()
+        feed.end()
         try? await Task.sleep(for: .milliseconds(600))
         engine.stop()
         engine.inputNode.removeTap(onBus: 0)
         task?.finish()
+        feed.set(nil)
         isListening = false
         try? AVAudioSession.sharedInstance().setActive(false, options: .notifyOthersOnDeactivation)
-        return text.trimmingCharacters(in: .whitespacesAndNewlines)
+        return joined().trimmingCharacters(in: .whitespacesAndNewlines)
     }
 }
 
