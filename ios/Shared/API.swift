@@ -11,12 +11,13 @@ enum API {
     }
 
     static func call<T: Decodable>(
-        _ path: String, method: String = "GET", body: [String: Any]? = nil, chat: String? = nil
+        _ path: String, method: String = "GET", body: [String: Any]? = nil, chat: String? = nil, person: String? = nil
     ) async throws -> T {
         var request = URLRequest(url: base.appendingPathComponent(path))
         request.httpMethod = method
         request.setValue("application/json", forHTTPHeaderField: "content-type")
         if let chat { request.setValue(chat, forHTTPHeaderField: "x-amber-chat") }
+        if let person { request.setValue(person, forHTTPHeaderField: "x-amber-person") }
         if let body { request.httpBody = try JSONSerialization.data(withJSONObject: body) }
         let data: Data
         let response: URLResponse

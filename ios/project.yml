@@ -10,7 +10,7 @@ settings:
     CODE_SIGN_STYLE: Automatic
     SWIFT_VERSION: "5.0"
     MARKETING_VERSION: "2.0"
-    CURRENT_PROJECT_VERSION: "43"
+    CURRENT_PROJECT_VERSION: "44"
     TARGETED_DEVICE_FAMILY: "1"
 targets:
   Amber:
@@ -64,11 +64,15 @@ targets:
           - Geist-SemiBold.ttf
         NSMicrophoneUsageDescription: Amber listens while you hold the talk button, so you can say what to change instead of typing it.
         NSSpeechRecognitionUsageDescription: Amber turns what you say into words on your phone, so you can talk to what your chat made.
+        NSFaceIDUsageDescription: Amber checks it is you before it opens, because it remembers what you have told it.
         NSExtension:
           NSExtensionPointIdentifier: com.apple.message-payload-provider
           NSExtensionPrincipalClass: $(PRODUCT_MODULE_NAME).MessagesViewController
+    entitlements:
+      path: Messages/Messages.entitlements
     settings:
       base:
+        CODE_SIGN_ENTITLEMENTS: Messages/Messages.entitlements
         PRODUCT_BUNDLE_IDENTIFIER: com.calebnewton.amber.messages
         TARGETED_DEVICE_FAMILY: "1"
         ASSETCATALOG_COMPILER_APPICON_NAME: iMessage App Icon

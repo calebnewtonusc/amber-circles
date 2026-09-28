@@ -7,7 +7,11 @@ struct RootView: View {
     var body: some View {
         ZStack {
             Amber.paper.ignoresSafeArea()
-            if store.name.isEmpty {
+            if store.personKey == nil {
+                SignInView()
+            } else if !store.unlocked && !(store.personKey ?? "").isEmpty {
+                LockView()
+            } else if store.name.isEmpty {
                 NameView()
             } else if let building = store.building {
                 BuildingView(state: building)

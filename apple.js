@@ -17,7 +17,13 @@ async function appleKeys() {
   return keys;
 }
 
-const decode = (part) => JSON.parse(Buffer.from(part, "base64url").toString("utf8"));
+const decode = (part) => {
+  try {
+    return JSON.parse(Buffer.from(part, "base64url").toString("utf8"));
+  } catch {
+    throw new Error("That sign-in did not come through. Try again.");
+  }
+};
 
 export async function verifyAppleToken(token) {
   const [head, body, signature] = String(token || "").split(".");

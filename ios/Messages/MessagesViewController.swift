@@ -23,6 +23,8 @@ final class MessagesViewController: MSMessagesAppViewController {
 
     override func willBecomeActive(with conversation: MSConversation) {
         super.willBecomeActive(with: conversation)
+        // Face ID on every open (Caleb: "face id each time it opens").
+        store.unlocked = false
         store.expanded = presentationStyle == .expanded
         store.attach(conversation)
     }

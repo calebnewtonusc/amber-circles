@@ -85,6 +85,10 @@ final class ChatStore: ObservableObject {
     @Published var liveHTML: [String: String] = [:]
     /// What the person is saying right now, while they hold the talk bar.
     @Published var liveSpeech: String?
+    /// From Sign in with Apple; nil until they sign in.
+    @Published var personKey: String? = PersonKey.load()
+    /// Face ID passed for this open.
+    @Published var unlocked = false
     /// New apps being talked through on this phone, shown as boxes in the list.
     @Published var drafts: [DraftApp] = [] { didSet { saveLocal() } }
     /// The last thing Amber said on the home screen, shown for a moment above
@@ -341,7 +345,8 @@ final class ChatStore: ObservableObject {
             var body: [String: Any] = ["text": words]
             if !slug.isEmpty, !slug.hasPrefix("new-") { body["slug"] = slug }
             let result: Reply = try await API.call(
-                "api/chats/\(session.chat)/agent", method: "POST", body: body, chat: session.token)
+                "api/chats/\(session.chat)/agent", method: "POST", body: body, chat: session.token,
+                person: (personKey ?? "").isEmpty ? nil : personKey)
             answered = true
             filler.cancel()
             self.reply(slug, result.reply)
