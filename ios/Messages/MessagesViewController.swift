@@ -24,7 +24,9 @@ final class MessagesViewController: MSMessagesAppViewController {
     override func willBecomeActive(with conversation: MSConversation) {
         super.willBecomeActive(with: conversation)
         // Face ID on every open (Caleb: "face id each time it opens").
-        store.unlocked = false
+        // Only someone signed in has a Face ID lock; skipping sign-in means
+        // there is nothing to unlock, so Amber is not left muted.
+        store.unlocked = (store.personKey ?? "") == "" && store.personKey != nil
         store.expanded = presentationStyle == .expanded
         store.attach(conversation)
     }

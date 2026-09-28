@@ -254,17 +254,19 @@ final class Speaker: NSObject, ObservableObject, AVAudioPlayerDelegate {
     /// start, and talking mid-build did not work). Amber stays quiet then;
     /// its words still arrive as texts.
     var listening = false
+    /// Locked behind Face ID: stay quiet, and stop anything already playing.
+    var muted = true { didSet { if muted { stop() } } }
     private var player: AVAudioPlayer?
 
     func say(_ text: String, token: String) async {
-        guard isOn, !text.isEmpty, !listening else { return }
+        guard isOn, !text.isEmpty, !listening, !muted else { return }
         var request = URLRequest(url: API.base.appendingPathComponent("api/speak"))
         request.httpMethod = "POST"
         request.setValue("application/json", forHTTPHeaderField: "content-type")
         request.setValue(token, forHTTPHeaderField: "x-amber-chat")
         request.httpBody = try? JSONSerialization.data(withJSONObject: ["text": String(text.prefix(700))])
         guard let (data, response) = try? await URLSession.shared.data(for: request),
-              (response as? HTTPURLResponse)?.statusCode == 200, !listening else { return }
+              (response as? HTTPURLResponse)?.statusCode == 200, !listening, !muted else { return }
         do {
             // Plain playback, not play-and-record: iOS refuses play-and-record
             // until the microphone is allowed, so someone who only typed never

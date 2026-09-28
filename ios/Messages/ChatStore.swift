@@ -196,7 +196,10 @@ final class ChatStore: ObservableObject {
     /// simulator, 2026-09-28).
     @Published var personKey: String? = PersonKey.load() ?? (UserDefaults.standard.bool(forKey: "amber.signinSkipped") ? "" : nil)
     /// Face ID passed for this open.
-    @Published var unlocked = false
+    /// Amber says nothing out loud until you are past Face ID (Caleb,
+    /// 2026-09-28: "it shouldn't start talking until you get past the face id
+    /// login"). Its words still arrive as text.
+    @Published var unlocked = false { didSet { speaker.muted = !unlocked } }
     /// New apps being talked through on this phone, shown as boxes in the list.
     @Published var drafts: [DraftApp] = [] { didSet { saveLocal() } }
     /// The last thing Amber said on the home screen, shown for a moment above
@@ -272,6 +275,10 @@ final class ChatStore: ObservableObject {
     func attach(_ conversation: MSConversation) {
         participant = conversation.localParticipantIdentifier.uuidString
         restoreLocal()
+        // Home's chat starts empty on every open; what was said is still in
+        // Amber's memory on the server, it just is not left on screen
+        // (Caleb, 2026-09-28).
+        talk[""] = []
         if let data = UserDefaults.standard.data(forKey: sessionKey),
            let saved = try? JSONDecoder().decode(Session.self, from: data) {
             session = saved
