@@ -44,12 +44,13 @@ struct SignInView: View {
                 // them (Caleb, 2026-09-27). Centering moved them, because each
                 // step has a different amount under its title.
                 if tall { Color.clear.frame(height: Onboarding.headerTop) }
-            HStack(alignment: .top, spacing: 14) {
+            HStack(alignment: .center, spacing: 14) {
                 EggSlot(rank: 1).frame(width: 44, height: 50)
-                Text("Let's build together").font(Amber.font(30, .heavy)).headline().foregroundStyle(Amber.ink)
-                    .fixedSize(horizontal: false, vertical: true)
-                    .sharedTitle("headline", in: titles)
+                HeadlineSlot(rank: 1, text: "Let's build together", size: 30)
             }
+            // A fixed row: the title centres on the egg, and the egg stays
+            // put whether the title is one line or two.
+            .frame(height: Onboarding.headerHeight)
             .frame(maxWidth: .infinity)
             SignInWithAppleButton(.signIn) { request in
                 request.requestedScopes = [.fullName]
@@ -60,6 +61,9 @@ struct SignInView: View {
             .frame(height: 54)
             .onGeometryChange(for: CGRect.self) { $0.frame(in: .named("root")) } action: { appleFrame = $0 }
             .clipShape(Capsule())
+            // The same pill as "That's me" and the talk button: it slides and
+            // turns amber on the way to the next step.
+            .sharedTitle("pill", in: titles)
             .disabled(working)
             if let problem { Text(problem).font(Amber.font(16, .bold)).foregroundStyle(Amber.danger) }
             // Never a dead end: without sign-in Amber still works in this chat,

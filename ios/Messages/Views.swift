@@ -122,6 +122,21 @@ struct RootView: View {
                 }
             }
         }
+        // The one headline, drawn once like the egg. When the words change it
+        // deletes what it said and types the next thing (Caleb, 2026-09-27:
+        // "make it look like someone is typing the big text, then deletes it,
+        // then types the second text").
+        .overlayPreferenceValue(HeadlineKey.self) { slots in
+            GeometryReader { proxy in
+                if let slot = slots.max(by: { $0.rank < $1.rank }) {
+                    let frame = proxy[slot.anchor]
+                    RetypingText(target: slot.text, size: slot.size)
+                        .frame(width: frame.width, height: frame.height, alignment: .leading)
+                        .position(x: frame.midX, y: frame.midY)
+                        .allowsHitTesting(false)
+                }
+            }
+        }
         .environment(\.titles, titles)
         .tint(Amber.ink)
     }
@@ -136,6 +151,8 @@ struct NameView: View {
     /// Set the moment it starts leaving, so the keyboard closing underneath
     /// cannot drag the whole screen down while it blurs away.
     @State private var leaving = false
+    @State private var opened = false
+    @State private var hint = ""
 
     /// The button becomes the talk bar's pill on the way to home. The
     /// keyboard goes first: closing it moves the talk bar, and the egg and
@@ -157,15 +174,23 @@ struct NameView: View {
                 // them (Caleb, 2026-09-27). Centering moved them, because each
                 // step has a different amount under its title.
                 if tall { Color.clear.frame(height: Onboarding.headerTop) }
-                HStack(alignment: .top, spacing: 14) {
+                HStack(alignment: .center, spacing: 14) {
                     EggSlot(rank: 3).frame(width: 44, height: 50)
-                    Text("What should the chat call you?").font(Amber.font(30, .heavy)).headline().foregroundStyle(Amber.ink)
-                        .fixedSize(horizontal: false, vertical: true)
-                        .sharedTitle("headline", in: titles)
+                    HeadlineSlot(rank: 3, text: "What should the chat call you?", size: 30)
                 }
+                // A fixed row: the title centres on the egg, and the egg stays
+                // put whether the title is one line or two.
+                .frame(height: Onboarding.headerHeight)
                 .frame(maxWidth: .infinity)
-                TextField("Your first name", text: $text)
+                // The box opens out from the left, then its hint types itself.
+                TextField(hint, text: $text)
                     .font(Amber.font(22)).padding(14).frame(minHeight: 60).block()
+                    .mask(alignment: .leading) {
+                        GeometryReader { box in
+                            RoundedRectangle(cornerRadius: 12, style: .continuous)
+                                .frame(width: opened ? box.size.width : 0)
+                        }
+                    }
                     .focused($focused)
                     .submitLabel(.done)
                     .onSubmit { next() }
@@ -179,6 +204,15 @@ struct NameView: View {
             .padding(20)
         }
         .ignoresSafeArea(leaving ? .keyboard : [])
+        .task {
+            try? await Task.sleep(for: .milliseconds(350))
+            withAnimation(.reveal) { opened = true }
+            try? await Task.sleep(for: .milliseconds(450))
+            for letter in "Your first name" {
+                hint.append(letter)
+                try? await Task.sleep(for: .milliseconds(28))
+            }
+        }
     }
 }
 
@@ -199,7 +233,6 @@ struct ErrorLine: View {
 
 struct HomeView: View {
     @EnvironmentObject var store: ChatStore
-    @Environment(\.titles) private var titles
     @State private var request = ""
     /// Where each row sits on screen, so opening it grows from that row.
     @State private var frames: [String: CGRect] = [:]
@@ -209,9 +242,7 @@ struct HomeView: View {
         VStack(spacing: 0) {
             ScrollView {
                 VStack(alignment: .leading, spacing: 20) {
-                    Text("Made in this chat")
-                        .sharedTitle("headline", in: titles)
-                        .font(Amber.font(30, .heavy)).headline().foregroundStyle(Amber.ink)
+                    HeadlineSlot(rank: 5, text: "Made in this chat", size: 30)
                     ErrorLine()
                     apps
                     boardSection
@@ -380,9 +411,7 @@ struct DraftView: View {
                             .frame(width: 36, height: 36).background(Circle().fill(Amber.wash))
                     }
                     .accessibilityLabel("Everything in this chat")
-                    Text(store.drafts.first { $0.id == key }?.title ?? "New app")
-                        .font(Amber.font(22, .heavy)).headline().foregroundStyle(Amber.ink)
-                        .fixedSize(horizontal: false, vertical: true)
+                    HeadlineSlot(rank: 6, text: store.drafts.first { $0.id == key }?.title ?? "New app", size: 22)
                     Spacer(minLength: 0)
                 }
                 if store.changing[key] != nil {
@@ -419,8 +448,6 @@ struct DraftView: View {
 /// One app the chat made, as a row you tap to talk to it, change it or
 /// comment on it.
 struct AppRow: View {
-    @EnvironmentObject var store: ChatStore
-    @Environment(\.titles) private var titles
     let tool: ToolItem
     var unshared = false
     var body: some View {
@@ -429,14 +456,7 @@ struct AppRow: View {
                 .frame(width: 48, height: 48)
                 .overlay(Text(String(tool.title.prefix(1))).font(Amber.font(22, .heavy)).foregroundStyle(Amber.ink))
             VStack(alignment: .leading, spacing: 3) {
-                // While its screen is open the name lives there, so moving
-                // between the two is one title flying, not two fading.
-                if store.route == .tool(tool.slug) {
-                    Text(tool.title).font(Amber.font(18, .heavy)).fixedSize(horizontal: false, vertical: true).hidden()
-                } else {
-                    Text(tool.title).font(Amber.font(18, .heavy)).foregroundStyle(Amber.ink).fixedSize(horizontal: false, vertical: true)
-                        .sharedTitle("title-\(tool.slug)", in: titles)
-                }
+                Text(tool.title).font(Amber.font(18, .heavy)).foregroundStyle(Amber.ink).fixedSize(horizontal: false, vertical: true)
                 Text(unshared ? "Not shared with the chat yet" : tool.has_draft ? "A change is waiting" : "\(tool.made_by.map { "By \($0)" } ?? "Made here") · \(timeAgo(tool.updated_at))")
                     .font(Amber.font(15)).foregroundStyle(unshared || tool.has_draft ? Amber.link : Amber.muted).lineLimit(1)
             }
@@ -485,8 +505,7 @@ struct BuildingView: View {
             VStack(alignment: .leading, spacing: 18) {
                 HStack(alignment: .center, spacing: 14) {
                     EggSlot(rank: 4).frame(width: 44, height: 50)
-                    Text("Making it").font(Amber.font(32, .heavy)).headline().foregroundStyle(Amber.ink)
-                        .fixedSize(horizontal: false, vertical: true)
+                    HeadlineSlot(rank: 4, text: "Making it", size: 32)
                 }
                 Text("\u{201C}\(state.request)\u{201D}").font(Amber.font(19, .bold)).foregroundStyle(Amber.ink)
                     .padding(.leading, 12)
@@ -524,7 +543,6 @@ struct BuildingView: View {
 // MARK: - one tool: what it is, open it, talk to it
 
 struct ToolView: View {
-    @Environment(\.titles) private var titles
     @EnvironmentObject var store: ChatStore
     let slug: String
     @State private var explanation: String?
@@ -553,9 +571,7 @@ struct ToolView: View {
                             .frame(width: 36, height: 36).background(Circle().fill(Amber.wash))
                     }
                     .accessibilityLabel("Everything in this chat")
-                    Text(store.tool(slug)?.title ?? "").font(Amber.font(22, .heavy)).headline().foregroundStyle(Amber.ink)
-                        .fixedSize(horizontal: false, vertical: true)
-                        .sharedTitle("title-\(slug)", in: titles)
+                    HeadlineSlot(rank: 6, text: store.tool(slug)?.title ?? "", size: 22)
                     Spacer(minLength: 0)
                 }
                 if store.tool(slug) != nil {
@@ -1035,4 +1051,71 @@ enum Onboarding {
     /// Where the egg and title sit on every first-run step once iMessage
     /// gives Amber the full screen: about a third of the way down.
     static let headerTop: CGFloat = 200
+    /// Two lines of the 30pt title.
+    static let headerHeight: CGFloat = 84
+}
+
+struct HeadlineValue {
+    let rank: Int
+    let text: String
+    let size: CGFloat
+    let anchor: Anchor<CGRect>
+}
+
+struct HeadlineKey: PreferenceKey {
+    static let defaultValue: [HeadlineValue] = []
+    static func reduce(value: inout [HeadlineValue], nextValue: () -> [HeadlineValue]) { value += nextValue() }
+}
+
+/// Holds the headline's room in the layout; the words are drawn by the
+/// one RetypingText above every screen.
+struct HeadlineSlot: View {
+    let rank: Int
+    let text: String
+    let size: CGFloat
+    var body: some View {
+        Text(text).font(Amber.font(size, .heavy)).headline()
+            .fixedSize(horizontal: false, vertical: true)
+            .hidden()
+            .anchorPreference(key: HeadlineKey.self, value: .bounds) {
+                [HeadlineValue(rank: rank, text: text, size: size, anchor: $0)]
+            }
+            .accessibilityLabel(text)
+            .accessibilityAddTraits(.isHeader)
+    }
+}
+
+/// Deletes what it says, then types the new words, with an amber caret
+/// while it works.
+struct RetypingText: View {
+    let target: String
+    let size: CGFloat
+    @State private var shown = ""
+    @State private var working = false
+
+    var body: some View {
+        (Text(shown) + Text(working ? "|" : "").foregroundColor(Amber.amber))
+            .font(Amber.font(size, .heavy)).headline().foregroundStyle(Amber.ink)
+            .fixedSize(horizontal: false, vertical: true)
+            .accessibilityHidden(true)
+            .task(id: target) { await retype() }
+    }
+
+    // About 35 letters a second typing, 80 deleting: reads as a person
+    // typing, and a two-line title still lands in about a second.
+    private func retype() async {
+        working = true
+        while !shown.isEmpty {
+            shown.removeLast()
+            try? await Task.sleep(for: .milliseconds(12))
+            if Task.isCancelled { return }
+        }
+        try? await Task.sleep(for: .milliseconds(90))
+        for letter in target {
+            shown.append(letter)
+            try? await Task.sleep(for: .milliseconds(28))
+            if Task.isCancelled { return }
+        }
+        working = false
+    }
 }
