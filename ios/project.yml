@@ -10,7 +10,7 @@ settings:
     CODE_SIGN_STYLE: Automatic
     SWIFT_VERSION: "5.0"
     MARKETING_VERSION: "2.0"
-    CURRENT_PROJECT_VERSION: "52"
+    CURRENT_PROJECT_VERSION: "53"
     TARGETED_DEVICE_FAMILY: "1"
 targets:
   Amber:
@@ -29,6 +29,10 @@ targets:
         CFBundleVersion: $(CURRENT_PROJECT_VERSION)
         NSMicrophoneUsageDescription: Amber listens while you hold the talk button, so you can say what to change instead of typing it.
         NSSpeechRecognitionUsageDescription: Amber turns what you say into words on your phone, so you can talk to what your chat made.
+        # iOS reads Face ID permission from the containing app when the
+        # extension asks. With it only on the extension, every unlock fell
+        # straight to the passcode (Caleb's phone, build 52).
+        NSFaceIDUsageDescription: Amber checks it is you before it opens, because it remembers what you have told it.
         UILaunchScreen: {}
         UIRequiresFullScreen: true
         CFBundleURLTypes:
