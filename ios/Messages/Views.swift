@@ -275,12 +275,21 @@ struct HomeView: View {
 
     var body: some View {
         VStack(spacing: 0) {
+            // Projects first, under the header, then one Activity for all of
+            // them; the chat with Amber fills the rest (Caleb, 2026-09-27).
+            VStack(alignment: .leading, spacing: 10) {
+                ErrorLine()
+                ScrollView { apps.padding(.vertical, 2) }
+                    .scrollBounceBehavior(.basedOnSize)
+                    .frame(maxHeight: 236)
+                    .fixedSize(horizontal: false, vertical: true)
+                HomeActivityTray(frames: $frames)
+            }
+            .padding(.horizontal, 20).padding(.top, 6).padding(.bottom, 8)
+            .animation(.reveal, value: store.drafts)
             ScrollViewReader { proxy in
             ScrollView {
                 VStack(alignment: .leading, spacing: 20) {
-                    ErrorLine()
-                    apps
-                    boardSection
                     // Home is a chat too: what people asked Amber here, its
                     // answers, and a card for every project started from it.
                     VStack(alignment: .leading, spacing: 12) {
@@ -363,42 +372,6 @@ struct HomeView: View {
         withAnimation(.reveal) { store.route = .draft(draft.id) }
         store.host?.expand()
         store.greet(draft.id, "What are we making? Tell me who it's for and what it needs to do.")
-    }
-
-    /// Comments, to-dos and ideas from across the chat, under the apps.
-    @ViewBuilder
-    private var boardSection: some View {
-        if let board = store.board, !(board.comments.isEmpty && board.ideas.isEmpty && board.building.isEmpty) {
-            VStack(alignment: .leading, spacing: 10) {
-                ForEach(board.building) { now in
-                    HStack(spacing: 10) {
-                        ProgressView().controlSize(.small)
-                        Text("\(now.who) is making \(now.what)").font(Amber.font(16, .bold)).foregroundStyle(Amber.ink).lineLimit(2)
-                    }
-                    .padding(12).frame(maxWidth: .infinity, alignment: .leading)
-                    .background(RoundedRectangle(cornerRadius: 12, style: .continuous).fill(Amber.amberSoft))
-                }
-                ForEach(board.comments) { item in
-                    Button {
-                        if let slug = item.slug { store.revealFrom = frames[slug] ?? .zero; withAnimation(.reveal) { store.route = .tool(slug) } }
-                    } label: {
-                        VStack(alignment: .leading, spacing: 4) {
-                            Text("\(item.name ?? "Someone") on \(item.title ?? "an app")").font(Amber.font(14, .bold)).foregroundStyle(Amber.muted)
-                            Text(item.text).font(Amber.font(17)).foregroundStyle(Amber.ink).multilineTextAlignment(.leading)
-                        }
-                        .padding(12).frame(maxWidth: .infinity, alignment: .leading).block()
-                    }
-                    .buttonStyle(.plain)
-                }
-                ForEach(board.ideas) { idea in
-                    HStack(alignment: .top, spacing: 10) {
-                        Image(systemName: "lightbulb").font(.system(size: 15, weight: .semibold)).foregroundStyle(Amber.amber)
-                        Text(idea.description).font(Amber.font(17)).foregroundStyle(Amber.ink)
-                    }
-                    .padding(12).frame(maxWidth: .infinity, alignment: .leading).block()
-                }
-            }
-        }
     }
 }
 
@@ -1462,5 +1435,130 @@ struct ProjectCard: View {
         .buttonStyle(.plain)
         .padding(.trailing, 40)
         .onGeometryChange(for: CGRect.self) { $0.frame(in: .named("stage")) } action: { store.rowFrames["card-\(key)"] = $0 }
+    }
+}
+
+/// Home's Activity: what happened across every project in this chat, open
+/// comments, ideas people mentioned, and who is building right now.
+struct HomeActivityTray: View {
+    @EnvironmentObject var store: ChatStore
+    @Binding var frames: [String: CGRect]
+    @State private var open = false
+
+    private enum Entry: Identifiable {
+        case event(BoardEvent)
+        case comment(BoardItem)
+        var id: String { switch self { case .event(let e): "e-\(e.id)"; case .comment(let c): "c-\(c.id)" } }
+    }
+
+    private var entries: [Entry] {
+        (store.board?.activity ?? []).map(Entry.event) + (store.board?.comments ?? []).reversed().map(Entry.comment)
+    }
+    private var openComments: Int { store.board?.comments.count ?? 0 }
+    private var building: [Board.Building] { store.board?.building ?? [] }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            Button { withAnimation(.reveal) { open.toggle() } } label: {
+                HStack(spacing: 8) {
+                    Image(systemName: "clock.arrow.circlepath").font(.system(size: 13, weight: .semibold)).foregroundStyle(Amber.amber)
+                    Text("Activity").font(Amber.font(15, .bold)).foregroundStyle(Amber.ink)
+                    if let now = building.first {
+                        ProgressView().controlSize(.mini)
+                        Text("\(now.who) is making \(now.what)").font(Amber.font(13)).foregroundStyle(Amber.muted).lineLimit(1)
+                    } else if openComments > 0 {
+                        Text("\(openComments) open \(openComments == 1 ? "comment" : "comments")").font(Amber.font(14)).foregroundStyle(Amber.muted)
+                    }
+                    Spacer()
+                    Image(systemName: "chevron.down").font(.system(size: 12, weight: .bold)).foregroundStyle(Amber.muted)
+                        .rotationEffect(.degrees(open ? 180 : 0))
+                }
+                .padding(.horizontal, 14).frame(height: 44)
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            if open {
+                ScrollView {
+                    VStack(alignment: .leading, spacing: 6) {
+                        if entries.isEmpty && (store.board?.ideas ?? []).isEmpty {
+                            Text("Nothing yet. Edits, publishes and comments on any project show up here.")
+                                .font(Amber.font(14)).foregroundStyle(Amber.muted).padding(.vertical, 6)
+                        }
+                        ForEach(store.board?.ideas ?? []) { idea in
+                            HStack(alignment: .top, spacing: 10) {
+                                Image(systemName: "lightbulb").font(.system(size: 12, weight: .semibold)).foregroundStyle(Amber.amber).frame(width: 18)
+                                Text(idea.description).font(Amber.font(14)).foregroundStyle(Amber.body)
+                            }
+                            .padding(.vertical, 4)
+                        }
+                        ForEach(entries) { entry in
+                            switch entry {
+                            case .event(let event): row(event)
+                            case .comment(let comment): row(comment)
+                            }
+                        }
+                    }
+                    .padding(.horizontal, 12).padding(.bottom, 10)
+                }
+                .defaultScrollAnchor(.bottom)
+                .frame(maxHeight: 240)
+                .fixedSize(horizontal: false, vertical: true)
+            }
+        }
+        .background(RoundedRectangle(cornerRadius: 14, style: .continuous).fill(Amber.wash))
+        .overlay(RoundedRectangle(cornerRadius: 14, style: .continuous).strokeBorder(Amber.hairline, lineWidth: 1))
+    }
+
+    private func openProject(_ slug: String) {
+        guard store.tool(slug) != nil else { return }
+        store.openedRow = slug
+        store.revealFrom = frames[slug] ?? .zero
+        store.host?.expand()
+        withAnimation(.reveal) { store.route = .tool(slug) }
+    }
+
+    private func row(_ event: BoardEvent) -> some View {
+        let who = event.name ?? "Someone"
+        let (icon, line): (String, String) = switch event.kind {
+        case "made": ("sparkles", "\(who) made \(event.title)")
+        case "edited": ("pencil", "\(who) edited \(event.title)\(event.text.isEmpty ? "" : ": \(event.text)")")
+        case "published": ("globe", "\(who) published \(event.title) version \(event.version ?? 0)")
+        case "shared": ("bubble.left.fill", "\(who) sent \(event.title) to the chat")
+        case "declined": ("arrow.uturn.backward", "\(who) put back a change to \(event.title)")
+        default: ("circle", "\(who): \(event.title)")
+        }
+        return Button { openProject(event.slug) } label: {
+            HStack(alignment: .top, spacing: 10) {
+                Image(systemName: icon).font(.system(size: 12, weight: .semibold))
+                    .foregroundStyle(event.kind == "published" ? Amber.amber : Amber.muted).frame(width: 18).padding(.top, 2)
+                Text(line).font(Amber.font(14)).foregroundStyle(Amber.body).multilineTextAlignment(.leading)
+                    .fixedSize(horizontal: false, vertical: true)
+                Spacer(minLength: 4)
+                Text(timeAgo(event.created_at)).font(Amber.font(12)).foregroundStyle(Amber.muted)
+            }
+            .padding(.vertical, 4)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+    }
+
+    private func row(_ comment: BoardItem) -> some View {
+        let name = comment.name ?? "Someone"
+        return Button { if let slug = comment.slug { openProject(slug) } } label: {
+            HStack(alignment: .top, spacing: 10) {
+                Text(String(name.prefix(1)).uppercased()).font(.system(size: 10, weight: .bold)).foregroundStyle(PersonMark.color(name))
+                    .frame(width: 18, height: 18)
+                    .background(Circle().fill(PersonMark.color(name).opacity(0.22)))
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("\(name) on \(comment.title ?? "a project")").font(Amber.font(13, .bold)).foregroundStyle(Amber.muted)
+                    Text(comment.text).font(Amber.font(15)).foregroundStyle(Amber.ink).multilineTextAlignment(.leading)
+                }
+                Spacer(minLength: 0)
+            }
+            .padding(8)
+            .background(RoundedRectangle(cornerRadius: 10, style: .continuous).fill(Amber.sheet))
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
     }
 }

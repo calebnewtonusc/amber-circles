@@ -30,6 +30,19 @@ struct Board: Decodable {
     let comments: [BoardItem]
     let ideas: [Idea]
     let building: [Building]
+    /// Every project's history, oldest first.
+    var activity: [BoardEvent]? = nil
+}
+
+struct BoardEvent: Decodable, Identifiable, Hashable {
+    let id: String
+    let kind: String
+    let text: String
+    let version: Int?
+    let created_at: String
+    let name: String?
+    let slug: String
+    let title: String
 }
 
 /// One line of the conversation with a tool: what someone said, or what
