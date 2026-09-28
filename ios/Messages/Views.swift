@@ -17,6 +17,14 @@ extension View {
     func sharedTitle(_ id: String, in namespace: Namespace.ID?) -> some View {
         if let namespace { self.matchedGeometryEffect(id: id, in: namespace) } else { self }
     }
+
+    /// Slides between two places but keeps its own size: matching the frame
+    /// forced a short chip's width onto a long one and cut its label off
+    /// ("Sign-up sh...", 2026-09-28).
+    @ViewBuilder
+    func sharedSpot(_ id: String, in namespace: Namespace.ID?) -> some View {
+        if let namespace { self.matchedGeometryEffect(id: id, in: namespace, properties: .position) } else { self }
+    }
 }
 
 extension Animation {
@@ -95,6 +103,10 @@ extension AnyTransition {
 struct RootView: View {
     @EnvironmentObject var store: ChatStore
     @Namespace private var titles
+    /// The sheet's height. iMessage resizes the sheet outside SwiftUI, so the
+    /// layout sat still and then snapped when the new size landed; changes
+    /// to it now animate on the same curve (the "+" jump, 2026-09-28).
+    @State private var height: CGFloat = 0
 
     var body: some View {
         ZStack {
@@ -162,6 +174,8 @@ struct RootView: View {
             .ignoresSafeArea(.keyboard)
         }
         .coordinateSpace(.named("root"))
+        .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { height = $0 }
+        .animation(.smooth(duration: 0.38), value: height)
         // One headline for the whole app. First run and the top bar only say
         // where it goes, so on the way in the question travels from the
         // middle to the top while it deletes, then types the new words there.
@@ -1413,7 +1427,7 @@ struct TopBar: View {
                     Image(systemName: "plus").font(.system(size: 18, weight: .semibold)).foregroundStyle(Amber.ink)
                         .frame(width: 44, height: 44).background(Circle().fill(Amber.wash))
                 }
-                .sharedTitle("new", in: titles)
+                .sharedSpot("new", in: titles)
                 .accessibilityLabel("New project")
                 .onGeometryChange(for: CGRect.self) { $0.frame(in: .named("stage")) } action: { store.rowFrames["__plus"] = $0 }
                 .transition(.blurReplace)
@@ -1682,6 +1696,7 @@ struct StarterChips: View {
                         .overlay(Capsule().strokeBorder(Amber.hairline, lineWidth: 1))
                 }
                 .buttonStyle(.plain)
+                .sharedSpot("starter-\(label)", in: titles)
             }
         }
         .transition(.blurReplace)
@@ -1736,7 +1751,7 @@ struct CompactView: View {
                         .background(Capsule().fill(Amber.ink))
                 }
                 .buttonStyle(.plain)
-                .sharedTitle("new", in: titles)
+                .sharedSpot("new", in: titles)
                 ForEach(store.drafts) { draft in pill(draft.title) { open(.draft(draft.id)) }.sharedTitle("proj-\(draft.id)", in: titles) }
                 ForEach(tools) { tool in pill(tool.title) { open(.tool(tool.slug)) }.sharedTitle("proj-\(tool.slug)", in: titles) }
             }
@@ -1751,6 +1766,7 @@ struct CompactView: View {
                             .overlay(Capsule().strokeBorder(Amber.hairline, lineWidth: 1))
                     }
                     .buttonStyle(.plain)
+                    .sharedSpot("starter-\(label)", in: titles)
                 }
             }
             Spacer(minLength: 0)
