@@ -14,6 +14,9 @@ struct DraftApp: Codable, Identifiable, Equatable {
     let id: String
     var started: Date
     var title: String
+    /// When its build was sent. Set and never cleared until the app it made
+    /// takes its place, so a build cut off by closing iMessage still lands.
+    var buildStarted: Date? = nil
 }
 
 struct BoardItem: Decodable, Identifiable {
@@ -322,6 +325,7 @@ final class ChatStore: ObservableObject {
         } catch {
             self.error = error.localizedDescription
         }
+        await reconcileDrafts()
     }
 
     func tool(_ slug: String) -> ToolItem? { overview?.tools.first { $0.slug == slug } }
@@ -503,6 +507,7 @@ final class ChatStore: ObservableObject {
             drafts[index].title = String(request.prefix(40))
         }
         changing[draftKey] = Date()
+        if let index = drafts.firstIndex(where: { $0.id == draftKey }) { drafts[index].buildStarted = Date() }
         defer { changing[draftKey] = nil }
         do {
             let result = try await API.build(request: request, chat: session.chat, slug: nil, token: session.token) { [weak self] _, _, html, doing in
@@ -512,27 +517,69 @@ final class ChatStore: ObservableObject {
             liveHTML[draftKey] = nil
             doing[draftKey] = nil
             await refresh()
-            // The talk that shaped it moves into it, on the server and here.
-            struct Moved: Decodable { let moved: Int }
-            let _: Moved? = try? await API.call(
-                "api/chats/\(session.chat)/adopt", method: "POST",
-                body: ["slug": result.slug, "since": ISO8601DateFormatter().string(from: since.addingTimeInterval(-2))],
-                chat: session.token)
-            withAnimation(.reveal) {
-                talk[result.slug] = (talk[draftKey] ?? []) + (talk[result.slug] ?? [])
-                talk[draftKey] = nil
-                drafts.removeAll { $0.id == draftKey }
-                if var home = talk[""] {
-                    for index in home.indices where home[index].project == draftKey { home[index].project = result.slug }
-                    talk[""] = home
-                }
-                unpublished.insert(result.slug)
-                if route == .draft(draftKey) { route = .tool(result.slug) }
-            }
-            let title = tool(result.slug)?.title ?? "it"
-            reply(result.slug, "\(title) is ready. Try it, then tap Publish when you want the chat to have it.")
+            guard drafts.contains(where: { $0.id == draftKey }) else { return }
+            await adopt(draftKey, into: result.slug, since: since)
         } catch {
-            reply(draftKey, "That didn't get built. \(error.localizedDescription)")
+            liveHTML[draftKey] = nil
+            doing[draftKey] = nil
+            // Closing iMessage drops the connection, but the server keeps
+            // building; the app it makes is picked up the next time Amber opens
+            // (Caleb, 2026-09-28: the draft stayed on home beside the app).
+            changing[draftKey] = nil
+            await refresh()
+            if drafts.contains(where: { $0.id == draftKey }) {
+                reply(draftKey, "I lost the connection while building. If it finishes, it will take this box's place.")
+            }
+        }
+    }
+
+    /// The draft's conversation and chat card move into the app it became.
+    private func adopt(_ draftKey: String, into slug: String, since: Date) async {
+        guard let session else { return }
+        struct Moved: Decodable { let moved: Int }
+        let _: Moved? = try? await API.call(
+            "api/chats/\(session.chat)/adopt", method: "POST",
+            body: ["slug": slug, "since": ISO8601DateFormatter().string(from: since.addingTimeInterval(-2))],
+            chat: session.token)
+        withAnimation(.reveal) {
+            talk[slug] = (talk[draftKey] ?? []) + (talk[slug] ?? [])
+            talk[draftKey] = nil
+            drafts.removeAll { $0.id == draftKey }
+            if var home = talk[""] {
+                for index in home.indices where home[index].project == draftKey { home[index].project = slug }
+                talk[""] = home
+            }
+            unpublished.insert(slug)
+            if route == .draft(draftKey) { route = .tool(slug) }
+        }
+        let title = tool(slug)?.title ?? "it"
+        reply(slug, "\(title) is ready. Try it, then tap Publish when you want the chat to have it.")
+    }
+
+    /// Drafts whose build finished while nobody was watching: each takes the
+    /// newest app this person made after its build started.
+    private var reconciling = false
+    func reconcileDrafts() async {
+        guard !reconciling, let tools = overview?.tools else { return }
+        reconciling = true
+        defer { reconciling = false }
+        let parser = ISO8601DateFormatter()
+        parser.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        func date(_ iso: String) -> Date? { parser.date(from: iso) ?? ISO8601DateFormatter().date(from: iso) }
+        var claimed = Set<String>()
+        for draft in drafts {
+            // Drafts from before buildStarted existed only show a build began
+            // by their title, which the build sets to the request.
+            let titled = draft.title != "New project" && draft.title != "New app"
+            guard let started = draft.buildStarted ?? (titled ? draft.started : nil), changing[draft.id] == nil else { continue }
+            let match = tools
+                .filter { $0.made_by == name && !claimed.contains($0.slug) }
+                .filter { (date($0.updated_at) ?? .distantPast) >= started.addingTimeInterval(-10) }
+                .min { (date($0.updated_at) ?? .distantPast) < (date($1.updated_at) ?? .distantPast) }
+            if let match {
+                claimed.insert(match.slug)
+                await adopt(draft.id, into: match.slug, since: draft.started)
+            }
         }
     }
 

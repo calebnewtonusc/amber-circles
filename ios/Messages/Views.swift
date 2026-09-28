@@ -331,6 +331,11 @@ struct HomeView: View {
             while !Task.isCancelled {
                 try? await Task.sleep(for: .seconds(6))
                 await store.loadBoard()
+                // A build cut off by closing iMessage is still finishing on
+                // the server; keep looking for it.
+                if store.drafts.contains(where: { $0.buildStarted != nil && store.changing[$0.id] == nil }) {
+                    await store.refresh()
+                }
             }
         }
     }
