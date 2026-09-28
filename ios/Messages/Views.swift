@@ -1,8 +1,35 @@
 import SafariServices
 import SwiftUI
 
+private struct HeroKey: EnvironmentKey { static let defaultValue: Namespace.ID? = nil }
+extension EnvironmentValues {
+    /// Shared so an app's row and its screen are one shape that grows.
+    var hero: Namespace.ID? {
+        get { self[HeroKey.self] }
+        set { self[HeroKey.self] = newValue }
+    }
+}
+
+extension View {
+    /// The card behind an app, matched between its row and its screen, so
+    /// tapping a row grows it into the app (Caleb: "that window should expand
+    /// from the button just like the preview one does").
+    @ViewBuilder
+    func heroCard(_ id: String, in namespace: Namespace.ID?, radius: CGFloat) -> some View {
+        if let namespace {
+            self.background(
+                RoundedRectangle(cornerRadius: radius, style: .continuous).fill(Amber.sheet)
+                    .matchedGeometryEffect(id: id, in: namespace)
+            )
+        } else {
+            self.background(RoundedRectangle(cornerRadius: radius, style: .continuous).fill(Amber.sheet))
+        }
+    }
+}
+
 struct RootView: View {
     @EnvironmentObject var store: ChatStore
+    @Namespace private var hero
 
     var body: some View {
         ZStack {
@@ -23,6 +50,7 @@ struct RootView: View {
                 }
             }
         }
+        .environment(\.hero, hero)
         .tint(Amber.ink)
     }
 }
@@ -167,7 +195,7 @@ struct HomeView: View {
                 .transition(.scale(scale: 0.92).combined(with: .opacity))
             }
             ForEach(store.overview?.tools ?? []) { tool in
-                Button { withAnimation(.spring(response: 0.4, dampingFraction: 0.9)) { store.route = .tool(tool.slug) }; store.host?.expand() } label: {
+                Button { withAnimation(.spring(response: 0.5, dampingFraction: 0.86)) { store.route = .tool(tool.slug) }; store.host?.expand() } label: {
                     AppRow(tool: tool, unshared: store.unpublished.contains(tool.slug))
                 }
                 .buttonStyle(.plain)
@@ -318,6 +346,7 @@ struct DraftView: View {
 /// One app the chat made, as a row you tap to talk to it, change it or
 /// comment on it.
 struct AppRow: View {
+    @Environment(\.hero) private var hero
     let tool: ToolItem
     var unshared = false
     var body: some View {
@@ -335,7 +364,9 @@ struct AppRow: View {
         }
         .padding(12)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .block(lifted: true)
+        .heroCard("app-\(tool.slug)", in: hero, radius: 12)
+        .overlay(RoundedRectangle(cornerRadius: 12, style: .continuous).strokeBorder(Amber.hairline, lineWidth: 1))
+        .shadow(color: .black.opacity(0.04), radius: 2, y: 2)
         .contentShape(Rectangle())
     }
 }
@@ -409,6 +440,8 @@ struct BuildingView: View {
 // MARK: - one tool: what it is, open it, talk to it
 
 struct ToolView: View {
+    @Environment(\.hero) private var hero
+    @State private var shown = false
     @EnvironmentObject var store: ChatStore
     let slug: String
     @State private var explanation: String?
@@ -478,6 +511,10 @@ struct ToolView: View {
             }
             dock
         }
+        .opacity(shown ? 1 : 0)
+        .heroCard("app-\(slug)", in: hero, radius: shown ? 0 : 12)
+        .ignoresSafeArea(edges: .bottom)
+        .onAppear { withAnimation(.easeOut(duration: 0.25).delay(0.12)) { shown = true } }
         .task(id: slug) {
             await load()
             await store.loadTalk(slug)

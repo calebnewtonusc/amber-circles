@@ -60,11 +60,31 @@ struct LivePanel: View {
         .frame(height: expanded ? height : 60, alignment: .top)
         .background(RoundedRectangle(cornerRadius: expanded ? 20 : 30, style: .continuous).fill(Amber.sheet))
         .clipShape(RoundedRectangle(cornerRadius: expanded ? 20 : 30, style: .continuous))
-        .overlay(RoundedRectangle(cornerRadius: expanded ? 20 : 30, style: .continuous).strokeBorder(Amber.hairline, lineWidth: 1))
-        .shadow(color: .black.opacity(0.06), radius: 12, y: 4)
+        .overlay(edge)
+        .shadow(color: (building ? Amber.amber : Color.black).opacity(building ? 0.18 : 0.06), radius: building ? 18 : 12, y: 4)
         .contentShape(Rectangle())
         .onTapGesture { if !expanded { open() } }
-        .animation(.spring(response: 0.45, dampingFraction: 0.86), value: expanded)
+        .animation(.spring(response: 0.55, dampingFraction: 0.86, blendDuration: 0.2), value: expanded)
+    }
+
+    /// The boundary. While it builds, a soft amber light travels around the
+    /// edge, so you can tell at a glance something is being made; when it is
+    /// done it settles into a clean frame.
+    @ViewBuilder
+    private var edge: some View {
+        let shape = RoundedRectangle(cornerRadius: expanded ? 20 : 30, style: .continuous)
+        if building {
+            TimelineView(.animation) { context in
+                let turn = context.date.timeIntervalSinceReferenceDate.truncatingRemainder(dividingBy: 2.4) / 2.4
+                shape.strokeBorder(
+                    AngularGradient(
+                        colors: [Amber.amber.opacity(0.08), Amber.amber, Color(red: 1, green: 0.85, blue: 0.55), Amber.amber.opacity(0.08)],
+                        center: .center, angle: .degrees(turn * 360)),
+                    lineWidth: 2)
+            }
+        } else {
+            shape.strokeBorder(Color.black.opacity(0.08), lineWidth: 1)
+        }
     }
 
     private var header: some View {
