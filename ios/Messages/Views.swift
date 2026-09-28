@@ -24,7 +24,7 @@ extension Animation {
     /// "it should be like a mask between 2 layers, simple as that. Idk why you
     /// keep flash banging the entire screen". The flash was the whole screen
     /// crossfading plus a matched-geometry card fading in on top of it.
-    static let reveal = Animation.smooth(duration: 0.42)
+    static let reveal = Animation.smooth(duration: 0.5)
 }
 
 /// A window cut into the layer on top, growing from the row that was tapped
@@ -68,14 +68,18 @@ struct RootView: View {
     var body: some View {
         ZStack {
             Amber.paper.ignoresSafeArea()
+            // Between steps the amber pill is one object that slides and scales
+            // to its next place, and the words around it blur across. The mask
+            // tried first chewed the old screen away from the bottom (Caleb,
+            // 2026-09-27: "ur transitions are so ass").
             if store.personKey == nil {
-                SignInView()
+                SignInView().transition(.blurReplace).zIndex(1)
             } else if !store.unlocked && !(store.personKey ?? "").isEmpty {
-                LockView()
+                LockView().transition(.blurReplace).zIndex(2)
             } else if store.name.isEmpty {
-                NameView()
+                NameView().transition(.blurReplace).zIndex(3)
             } else if let building = store.building {
-                BuildingView(state: building)
+                BuildingView(state: building).transition(.blurReplace).zIndex(4)
             } else {
                 // Home stays put underneath; an app is the layer on top,
                 // revealed through a mask on the way in and the way out.
@@ -96,6 +100,26 @@ struct RootView: View {
                     .coordinateSpace(.named("stage"))
                     TalkBar()
                 }
+                .transition(.blurReplace).zIndex(5)
+            }
+        }
+        .coordinateSpace(.named("root"))
+        // The one egg. Screens only say where it should be; it is drawn here,
+        // above all of them, so it moves and scales between places instead of
+        // fading out on one screen and in on the next (Caleb, 2026-09-27).
+        .overlayPreferenceValue(EggSlotKey.self) { slots in
+            GeometryReader { proxy in
+                if let slot = slots.max(by: { $0.rank < $1.rank }) {
+                    let frame = proxy[slot.anchor]
+                    Image("AmberLogo").resizable().scaledToFit()
+                        .frame(width: frame.width, height: frame.height)
+                        .position(x: frame.midX, y: frame.midY)
+                        // No animation of its own: it rides whatever moved the
+                        // screen. With one keyed to its frame it trailed half a
+                        // second behind the text whenever the window was dragged.
+                        .allowsHitTesting(false)
+                        .accessibilityHidden(true)
+                }
             }
         }
         .environment(\.titles, titles)
@@ -107,29 +131,51 @@ struct RootView: View {
 
 struct NameView: View {
     @EnvironmentObject var store: ChatStore
+    @Environment(\.titles) private var titles
     @State private var text = ""
+    /// Set the moment it starts leaving, so the keyboard closing underneath
+    /// cannot drag the whole screen down while it blurs away.
+    @State private var leaving = false
+
+    /// The button becomes the talk bar's pill on the way to home. The
+    /// keyboard goes first: closing it moves the talk bar, and the egg and
+    /// pill chased that moving target and landed late (seen frame by frame,
+    /// 2026-09-27). Its close takes about a quarter second.
+    private func next() {
+        leaving = true
+        store.host?.view.endEditing(true)
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.28) {
+            withAnimation(.reveal) { store.saveName(text) }
+        }
+    }
     @FocusState private var focused: Bool
 
     var body: some View {
-        ScrollView {
-            VStack(alignment: .leading, spacing: 18) {
+        TallAware(frozen: leaving) { tall in
+            VStack(alignment: .leading, spacing: tall ? 28 : 18) {
+                if tall { Spacer() }
                 HStack(alignment: .center, spacing: 14) {
-                    Image("AmberLogo").resizable().scaledToFit().frame(width: 44, height: 50).accessibilityHidden(true)
+                    EggSlot(rank: 3).frame(width: 44, height: 50)
                     Text("What should the chat call you?").font(Amber.font(30, .heavy)).headline().foregroundStyle(Amber.ink)
                         .fixedSize(horizontal: false, vertical: true)
+                        .sharedTitle("headline", in: titles)
                 }
+                .frame(maxWidth: .infinity)
                 TextField("Your first name", text: $text)
                     .font(Amber.font(22)).padding(14).frame(minHeight: 60).block()
                     .focused($focused)
                     .submitLabel(.done)
-                    .onSubmit { store.saveName(text) }
+                    .onSubmit { next() }
                     .onChange(of: focused) { _, isOn in if isOn { store.host?.expand() } }
-                Button("That's me") { store.saveName(text) }
+                Button("That's me") { next() }
                     .buttonStyle(BlockButton(primary: true, full: true))
+                    .sharedTitle("pill", in: titles)
                     .disabled(text.trimmingCharacters(in: .whitespaces).isEmpty)
+                Spacer()
             }
             .padding(20)
         }
+        .ignoresSafeArea(leaving ? .keyboard : [])
     }
 }
 
@@ -150,6 +196,7 @@ struct ErrorLine: View {
 
 struct HomeView: View {
     @EnvironmentObject var store: ChatStore
+    @Environment(\.titles) private var titles
     @State private var request = ""
     /// Where each row sits on screen, so opening it grows from that row.
     @State private var frames: [String: CGRect] = [:]
@@ -159,7 +206,8 @@ struct HomeView: View {
         VStack(spacing: 0) {
             ScrollView {
                 VStack(alignment: .leading, spacing: 20) {
-                    Text(store.session == nil && store.drafts.isEmpty ? "Let's build together" : "Made in this chat")
+                    Text("Made in this chat")
+                        .sharedTitle("headline", in: titles)
                         .font(Amber.font(30, .heavy)).headline().foregroundStyle(Amber.ink)
                     ErrorLine()
                     apps
@@ -184,7 +232,7 @@ struct HomeView: View {
                 .background(RoundedRectangle(cornerRadius: 18, style: .continuous).fill(Amber.sheet))
                 .overlay(RoundedRectangle(cornerRadius: 18, style: .continuous).strokeBorder(Amber.hairline, lineWidth: 1))
                 .padding(.horizontal, 16).padding(.bottom, 8)
-                .transition(.scale(scale: 0.96, anchor: .bottom).combined(with: .opacity))
+                .transition(.blurReplace)
             }
             if let live = store.liveSpeech {
                 Bubble(text: live, mine: true, live: true).padding(.horizontal, 16).padding(.bottom, 8)
@@ -207,13 +255,16 @@ struct HomeView: View {
 
     private var apps: some View {
         VStack(spacing: 10) {
+            Button { startNew() } label: { NewProjectRow() }
+                .buttonStyle(.plain)
+                .onGeometryChange(for: CGRect.self) { $0.frame(in: .named("stage")) } action: { frames["__new"] = $0 }
             ForEach(store.drafts) { draft in
                 Button { store.revealFrom = frames[draft.id] ?? .zero; withAnimation(.reveal) { store.route = .draft(draft.id) }; store.host?.expand() } label: {
                     DraftRow(draft: draft, building: store.changing[draft.id] != nil, doing: store.doing[draft.id])
                 }
                 .buttonStyle(.plain)
                 .onGeometryChange(for: CGRect.self) { $0.frame(in: .named("stage")) } action: { frames[draft.id] = $0 }
-                .transition(.scale(scale: 0.96, anchor: .top).combined(with: .opacity))
+                .transition(.blurReplace)
             }
             ForEach(store.overview?.tools ?? []) { tool in
                 Button { store.revealFrom = frames[tool.slug] ?? .zero; withAnimation(.reveal) { store.route = .tool(tool.slug) }; store.host?.expand() } label: {
@@ -224,8 +275,22 @@ struct HomeView: View {
             }
             if store.loading && (store.overview?.tools ?? []).isEmpty {
                 ProgressView().frame(maxWidth: .infinity, minHeight: 60)
+            } else if (store.overview?.tools ?? []).isEmpty && store.drafts.isEmpty {
+                Text("No projects made yet. Time to build!")
+                    .font(Amber.font(17)).foregroundStyle(Amber.muted)
+                    .frame(maxWidth: .infinity, alignment: .leading)
             }
         }
+    }
+
+    /// A blank project: its box opens out of the button, and Amber asks what
+    /// it should be before building anything.
+    private func startNew() {
+        let draft = store.newDraft(title: "New project")
+        store.revealFrom = frames["__new"] ?? .zero
+        withAnimation(.reveal) { store.route = .draft(draft.id) }
+        store.host?.expand()
+        store.greet(draft.id, "What are we making? Tell me who it's for and what it needs to do.")
     }
 
     /// Comments, to-dos and ideas from across the chat, under the apps.
@@ -319,7 +384,7 @@ struct DraftView: View {
                 }
                 if store.changing[key] != nil {
                     LivePanel(slug: nil, buildKey: key, expanded: $watching)
-                        .transition(.scale(scale: 0.96, anchor: .top).combined(with: .opacity))
+                        .transition(.blurReplace)
                 }
             }
             .padding(.horizontal, 16).padding(.top, 14).padding(.bottom, 8)
@@ -329,7 +394,7 @@ struct DraftView: View {
                     VStack(alignment: .leading, spacing: 12) {
                         ForEach(store.talk[key] ?? []) { turn in
                             Bubble(text: turn.text, mine: turn.mine, who: turn.who, typing: turn.fresh)
-                                .transition(.scale(scale: 0.96, anchor: .bottom).combined(with: .opacity))
+                                .transition(.blurReplace)
                         }
                         if let live = store.liveSpeech { Bubble(text: live, mine: true, live: true) }
                         Color.clear.frame(height: 1).id("end")
@@ -416,7 +481,7 @@ struct BuildingView: View {
         TimelineView(.periodic(from: .now, by: 1)) { context in
             VStack(alignment: .leading, spacing: 18) {
                 HStack(alignment: .center, spacing: 14) {
-                    Image("AmberLogo").resizable().scaledToFit().frame(width: 44, height: 50).accessibilityHidden(true)
+                    EggSlot(rank: 4).frame(width: 44, height: 50)
                     Text("Making it").font(Amber.font(32, .heavy)).headline().foregroundStyle(Amber.ink)
                         .fixedSize(horizontal: false, vertical: true)
                 }
@@ -497,7 +562,7 @@ struct ToolView: View {
                             .padding(.horizontal, 12)
                             .zIndex(-1)
                     }
-                    .transition(.scale(scale: 0.96, anchor: .top).combined(with: .opacity))
+                    .transition(.blurReplace)
                     if store.unpublished.contains(slug) {
                         Button("Publish to the chat") { store.publish(slug) }
                             .buttonStyle(BlockButton(primary: true, full: true))
@@ -561,7 +626,7 @@ struct ToolView: View {
         VStack(alignment: .leading, spacing: 10) {
             ForEach(store.talk[slug] ?? []) { turn in
                 Bubble(text: turn.text, mine: turn.mine, who: turn.who, typing: turn.fresh)
-                    .transition(.scale(scale: 0.96, anchor: .bottom).combined(with: .opacity))
+                    .transition(.blurReplace)
             }
             if let live = store.liveSpeech {
                 Bubble(text: live, mine: true, live: true)
@@ -733,6 +798,7 @@ struct SafariSheet: UIViewControllerRepresentable {
 /// are: at home it starts something new, inside an app it talks to that app.
 struct TalkBar: View {
     @EnvironmentObject var store: ChatStore
+    @Environment(\.titles) private var titles
     @State private var request = ""
     @FocusState private var focused: Bool
 
@@ -740,9 +806,9 @@ struct TalkBar: View {
         VStack(alignment: .leading, spacing: 10) {
             // The logo sits with the thing it names, not repeated at the top.
             HStack(spacing: 12) {
-                Image("AmberLogo").resizable().scaledToFit().frame(width: 30, height: 34)
-                    .accessibilityHidden(true)
+                EggSlot(rank: 5).frame(width: 30, height: 34)
                 HoldToTalk(label: "Hold to talk to Amber", onPress: { store.speaker.stop() }) { heard in send(heard) }
+                    .sharedTitle("pill", in: titles)
             }
             HStack(alignment: .bottom, spacing: 10) {
                 TextField(store.route == .home ? "Or type what the chat needs" : "Or type it", text: $request, axis: .vertical)
@@ -902,5 +968,62 @@ struct CommentsTray: View {
             let _: Done = try await API.call("api/tools/\(slug)/notes/\(thread.id)/resolve", method: "POST", body: ["resolved": true], chat: token)
             await reload()
         } catch { store.error = error.localizedDescription }
+    }
+}
+
+/// Tells its content whether iMessage has given it the full screen, and
+/// moves between the two layouts on the same curve as everything else.
+struct TallAware<Content: View>: View {
+    var frozen = false
+    @ViewBuilder let content: (Bool) -> Content
+    @State private var tall = false
+    var body: some View {
+        content(tall)
+            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+            .onGeometryChange(for: Bool.self) { $0.size.height > 520 } action: { value in
+                // Snaps, never glides: Caleb, 2026-09-27, "the sliding up
+                // sliding down has gotta stop".
+                if !frozen { tall = value }
+            }
+    }
+}
+
+struct EggSlotValue {
+    let rank: Int
+    let anchor: Anchor<CGRect>
+}
+
+/// Where the current screen wants the egg. The newest step outranks the one
+/// it is replacing, so during a change the egg heads for the new place.
+struct EggSlotKey: PreferenceKey {
+    static let defaultValue: [EggSlotValue] = []
+    static func reduce(value: inout [EggSlotValue], nextValue: () -> [EggSlotValue]) { value += nextValue() }
+}
+
+struct EggSlot: View {
+    let rank: Int
+    var body: some View {
+        Color.clear
+            .anchorPreference(key: EggSlotKey.self, value: .bounds) { [EggSlotValue(rank: rank, anchor: $0)] }
+            .accessibilityHidden(true)
+    }
+}
+
+/// The first row on home: start a project without having to say anything.
+struct NewProjectRow: View {
+    var body: some View {
+        HStack(spacing: 14) {
+            RoundedRectangle(cornerRadius: 10, style: .continuous).fill(Amber.amber)
+                .frame(width: 48, height: 48)
+                .overlay(Image(systemName: "plus").font(.system(size: 20, weight: .bold)).foregroundStyle(.white))
+            Text("New project").font(Amber.font(18, .heavy)).foregroundStyle(Amber.ink)
+            Spacer(minLength: 0)
+        }
+        .padding(12)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(RoundedRectangle(cornerRadius: 12, style: .continuous).fill(Amber.sheet))
+        .overlay(RoundedRectangle(cornerRadius: 12, style: .continuous)
+            .strokeBorder(Amber.amber.opacity(0.35), style: StrokeStyle(lineWidth: 1.5, dash: [6, 4])))
+        .contentShape(Rectangle())
     }
 }

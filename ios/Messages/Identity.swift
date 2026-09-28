@@ -29,16 +29,25 @@ enum PersonKey {
 /// First open: Sign in with Apple, so Amber knows it is you in every chat.
 struct SignInView: View {
     @EnvironmentObject var store: ChatStore
+    @Environment(\.titles) private var titles
     @State private var problem: String?
     @State private var working = false
+    @State private var skipFrame: CGRect = .zero
+    @State private var appleFrame: CGRect = .zero
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 18) {
+        // Compact, it sits at the top; expanded to full height, the same block
+        // glides to the middle and loosens (Caleb, 2026-09-27).
+        TallAware { tall in
+        VStack(alignment: .leading, spacing: tall ? 28 : 18) {
+            if tall { Spacer() }
             HStack(alignment: .center, spacing: 14) {
-                Image("AmberLogo").resizable().scaledToFit().frame(width: 44, height: 50).accessibilityHidden(true)
+                EggSlot(rank: 1).frame(width: 44, height: 50)
                 Text("Let's build together").font(Amber.font(30, .heavy)).headline().foregroundStyle(Amber.ink)
                     .fixedSize(horizontal: false, vertical: true)
+                    .sharedTitle("headline", in: titles)
             }
+            .frame(maxWidth: .infinity)
             SignInWithAppleButton(.signIn) { request in
                 request.requestedScopes = [.fullName]
             } onCompletion: { result in
@@ -46,20 +55,26 @@ struct SignInView: View {
             }
             .signInWithAppleButtonStyle(.black)
             .frame(height: 54)
+            .onGeometryChange(for: CGRect.self) { $0.frame(in: .named("root")) } action: { appleFrame = $0 }
             .clipShape(Capsule())
             .disabled(working)
             if let problem { Text(problem).font(Amber.font(16, .bold)).foregroundStyle(Amber.danger) }
             // Never a dead end: without sign-in Amber still works in this chat,
             // it just cannot remember you across chats.
             Button("Continue without signing in") {
-                store.personKey = ""
-                store.unlocked = true
+                store.revealFrom = skipFrame
+                withAnimation(.reveal) {
+                    store.personKey = ""
+                    store.unlocked = true
+                }
             }
             .font(Amber.font(16, .bold)).foregroundStyle(Amber.muted)
             .frame(maxWidth: .infinity)
+            .onGeometryChange(for: CGRect.self) { $0.frame(in: .named("root")) } action: { skipFrame = $0 }
             Spacer()
         }
         .padding(20)
+        }
         .onAppear { store.host?.expand() }
     }
 
@@ -79,10 +94,13 @@ struct SignInView: View {
             struct Signed: Decodable { let key: String; let name: String }
             let signed: Signed = try await API.call("api/people/signin", method: "POST", body: ["identityToken": token, "name": given])
             PersonKey.save(signed.key)
-            store.personKey = signed.key
-            store.unlocked = true
-            let name = signed.name.isEmpty ? given : signed.name
-            if !name.isEmpty { store.saveName(name) }
+            store.revealFrom = appleFrame
+            withAnimation(.reveal) {
+                store.personKey = signed.key
+                store.unlocked = true
+                let name = signed.name.isEmpty ? given : signed.name
+                if !name.isEmpty { store.saveName(name) }
+            }
         } catch {
             problem = error.localizedDescription
         }
@@ -95,7 +113,7 @@ struct LockView: View {
     var body: some View {
         VStack(spacing: 20) {
             Spacer()
-            Image("AmberLogo").resizable().scaledToFit().frame(height: 64)
+            EggSlot(rank: 2).frame(width: 56, height: 64)
             Text("Amber").font(Amber.font(26, .heavy)).foregroundStyle(Amber.ink)
             Button("Unlock with Face ID") { unlock() }
                 .buttonStyle(BlockButton(primary: true))
@@ -114,7 +132,7 @@ struct LockView: View {
             return
         }
         context.evaluatePolicy(.deviceOwnerAuthentication, localizedReason: "Open Amber") { success, _ in
-            Task { @MainActor in if success { withAnimation(.easeOut(duration: 0.25)) { store.unlocked = true } } }
+            Task { @MainActor in if success { store.revealFrom = .zero; withAnimation(.reveal) { store.unlocked = true } } }
         }
     }
 }
