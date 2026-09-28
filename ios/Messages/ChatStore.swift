@@ -177,6 +177,8 @@ final class ChatStore: ObservableObject {
     var revealFrom: CGRect = .zero
     @Published var loading = false
     @Published var expanded = false
+    /// How much of the screen the keyboard covers, measured by the host.
+    @Published var keyboardInset: CGFloat = 0
     /// The conversation with each tool, kept here so it survives the building
     /// screen replacing the tool's screen.
     @Published var talk: [String: [Turn]] = [:] { didSet { saveLocal() } }

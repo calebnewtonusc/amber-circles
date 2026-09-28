@@ -19,6 +19,24 @@ final class MessagesViewController: MSMessagesAppViewController {
         hosting.view.autoresizingMask = [.flexibleWidth, .flexibleHeight]
         view.addSubview(hosting.view)
         hosting.didMove(toParent: self)
+        // Inside iMessage the keyboard does not reach SwiftUI's safe area, so
+        // the message field sat under it (Caleb's phone, 2026-09-28). Measure
+        // how much of this view the keyboard covers and lift by that.
+        NotificationCenter.default.addObserver(self, selector: #selector(keyboardMoved(_:)),
+                                               name: UIResponder.keyboardWillChangeFrameNotification, object: nil)
+        NotificationCenter.default.addObserver(self, selector: #selector(keyboardMoved(_:)),
+                                               name: UIResponder.keyboardWillHideNotification, object: nil)
+    }
+
+    @objc private func keyboardMoved(_ note: Notification) {
+        var cover: CGFloat = 0
+        if note.name != UIResponder.keyboardWillHideNotification,
+           let end = (note.userInfo?[UIResponder.keyboardFrameEndUserInfoKey] as? NSValue)?.cgRectValue {
+            let local = view.convert(end, from: nil)
+            cover = max(0, view.bounds.maxY - local.minY - view.safeAreaInsets.bottom)
+        }
+        let seconds = (note.userInfo?[UIResponder.keyboardAnimationDurationUserInfoKey] as? Double) ?? 0.25
+        withAnimation(.smooth(duration: seconds)) { store.keyboardInset = cover }
     }
 
     override func willBecomeActive(with conversation: MSConversation) {

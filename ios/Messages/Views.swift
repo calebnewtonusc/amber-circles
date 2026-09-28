@@ -144,7 +144,13 @@ struct RootView: View {
             }
             if store.firstRun { FirstRunHeader().zIndex(10) }
             }
+            // Any tap above the keyboard puts it away (Caleb, 2026-09-28).
+            .simultaneousGesture(TapGesture().onEnded {
+                if store.keyboardInset > 0 { store.host?.view.endEditing(true) }
+            })
             }
+            .padding(.bottom, store.keyboardInset)
+            .ignoresSafeArea(.keyboard)
         }
         .coordinateSpace(.named("root"))
         // One headline for the whole app. First run and the top bar only say
