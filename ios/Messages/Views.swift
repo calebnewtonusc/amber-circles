@@ -588,6 +588,16 @@ struct ToolView: View {
             VStack(alignment: .leading, spacing: 12) {
                 if store.tool(slug) != nil {
                     VStack(spacing: 0) {
+                        // Sharing sits on top of the preview as a tab, the way
+                        // Activity hangs under it: one unit, not three blocks
+                        // stacked (Caleb, 2026-09-27: "visual hierarchy
+                        // nightmare").
+                        if let tool = store.tool(slug), store.unpublished.contains(slug) || tool.has_draft {
+                            shareTab(tool)
+                                .padding(.horizontal, previewing ? 20 : 30)
+                                .zIndex(-1)
+                                .transition(.blurReplace)
+                        }
                         LivePanel(slug: slug, expanded: $previewing, pinsJSON: pinsJSON, onPin: handlePin)
                         ActivityTray(slug: slug, notes: notes, activity: activity) { await load() }
                             // Starts where the preview's flat bottom edge does:
@@ -597,29 +607,7 @@ struct ToolView: View {
                             .zIndex(-1)
                     }
                     .transition(.blurReplace)
-                    // Two different acts, side by side (Caleb, 2026-09-27): the
-                    // chat gets a bubble, or the site gets the change.
-                    if let tool = store.tool(slug), store.unpublished.contains(slug) || tool.has_draft {
-                        HStack(spacing: 10) {
-                            Button { store.shareToChat(slug) } label: {
-                                Label("Send to chat", systemImage: "bubble.left.fill")
-                            }
-                            .buttonStyle(BlockButton(full: true))
-                            if tool.has_draft {
-                                Button { Task { await store.keep(slug); await load() } } label: {
-                                    Label("Publish online", systemImage: "globe")
-                                }
-                                .buttonStyle(BlockButton(primary: true, full: true))
-                                .disabled(store.changing[slug] != nil)
-                            } else {
-                                Label("Live online", systemImage: "globe")
-                                    .font(Amber.font(17, .bold)).foregroundStyle(Amber.muted)
-                                    .frame(maxWidth: .infinity, minHeight: 50)
-                                    .background(Capsule().fill(Amber.wash))
-                            }
-                        }
-                        .transition(.blurReplace)
-                    }
+
                 }
             }
             .padding(.horizontal, 16).padding(.top, 14).padding(.bottom, 8)
@@ -725,6 +713,39 @@ struct ToolView: View {
             }
         }
         .animation(.messageIn, value: store.talk[slug]?.count ?? 0)
+    }
+
+    /// Two acts in one slim strip: a bubble for the chat, or the change live
+    /// on the site. With no change waiting, the right side says it is live.
+    private func shareTab(_ tool: ToolItem) -> some View {
+        HStack(spacing: 0) {
+            Button { store.shareToChat(slug) } label: {
+                Label("Send to chat", systemImage: "bubble.left.fill")
+                    .font(Amber.font(14, .bold)).foregroundStyle(Amber.ink)
+                    .frame(maxWidth: .infinity, minHeight: 44)
+                    .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            Rectangle().fill(Amber.hairline).frame(width: 1, height: 20)
+            if tool.has_draft {
+                Button { Task { await store.keep(slug); await load() } } label: {
+                    Label("Publish online", systemImage: "globe")
+                        .font(Amber.font(14, .bold)).foregroundStyle(Amber.amber)
+                        .frame(maxWidth: .infinity, minHeight: 44)
+                        .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .disabled(store.changing[slug] != nil)
+            } else {
+                Label("Live online", systemImage: "globe")
+                    .font(Amber.font(14)).foregroundStyle(Amber.muted)
+                    .frame(maxWidth: .infinity, minHeight: 44)
+            }
+        }
+        .padding(.bottom, 6)
+        .background(UnevenRoundedRectangle(topLeadingRadius: 14, topTrailingRadius: 14, style: .continuous).fill(Amber.wash))
+        .overlay(UnevenRoundedRectangle(topLeadingRadius: 14, topTrailingRadius: 14, style: .continuous).strokeBorder(Amber.hairline, lineWidth: 1))
+        .padding(.bottom, -6)
     }
 
     /// Open pinned comments, as the preview's pin layer draws them.
