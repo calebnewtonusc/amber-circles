@@ -33,6 +33,8 @@
 	<string>$(CURRENT_PROJECT_VERSION)</string>
 	<key>ITSAppUsesNonExemptEncryption</key>
 	<false/>
+	<key>NSFaceIDUsageDescription</key>
+	<string>Amber checks it is you before it opens, because it remembers what you have told it.</string>
 	<key>NSMicrophoneUsageDescription</key>
 	<string>Amber listens while you hold the talk button, so you can say what to change instead of typing it.</string>
 	<key>NSSpeechRecognitionUsageDescription</key>
