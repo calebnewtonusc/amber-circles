@@ -102,7 +102,7 @@ struct RootView: View {
             // The top bar is fixed like the talk bar: screens change beneath
             // it and nothing animates over it (Caleb, 2026-09-27).
             VStack(spacing: 0) {
-            if !store.firstRun { TopBar() }
+            if !store.firstRun && store.expanded { TopBar() }
             ZStack {
             // Between steps the amber pill is one object that slides and scales
             // to its next place, and the words around it blur across. The mask
@@ -122,6 +122,12 @@ struct RootView: View {
                 // The talk bar sits under every screen and never moves;
                 // only the space above it changes (Caleb: "it should be the
                 // same amber/nav bar, that shouldn't have to reanimate").
+                // In the keyboard-sized sheet Amber is a launcher; the full
+                // app needs the full screen (Caleb, 2026-09-28).
+                Group {
+                if !store.expanded {
+                    CompactView().transition(.blurReplace)
+                } else {
                 VStack(spacing: 0) {
                     ZStack {
                         // Home never leaves. Rebuilt on the way back, every row
@@ -140,7 +146,12 @@ struct RootView: View {
                     .coordinateSpace(.named("stage"))
                     TalkBar()
                 }
-                .transition(.blurReplace).zIndex(5)
+                .transition(.blurReplace)
+                }
+                }
+                .animation(.reveal, value: store.expanded)
+                .transition(.blurReplace)
+                .zIndex(5)
             }
             if store.firstRun { FirstRunHeader().zIndex(10) }
             }
@@ -349,6 +360,22 @@ struct HomeView: View {
 
     private var apps: some View {
         VStack(spacing: 10) {
+            // Projects from before each thread had its own Amber. Only one
+            // thread can take them, and once taken they are gone from the rest.
+            if store.legacySession != nil && store.session == nil {
+                Button { store.claimLegacy() } label: {
+                    VStack(alignment: .leading, spacing: 4) {
+                        Label("Bring your earlier projects here", systemImage: "tray.and.arrow.down")
+                            .font(Amber.font(16, .bold)).foregroundStyle(Amber.ink)
+                        Text("They were shared across all your chats. Now they will live only in this one.")
+                            .font(Amber.font(14)).foregroundStyle(Amber.muted).multilineTextAlignment(.leading)
+                    }
+                    .padding(14).frame(maxWidth: .infinity, alignment: .leading)
+                    .background(RoundedRectangle(cornerRadius: 12, style: .continuous).fill(Amber.sheet))
+                    .overlay(RoundedRectangle(cornerRadius: 12, style: .continuous).strokeBorder(Amber.hairline, lineWidth: 1))
+                }
+                .buttonStyle(.plain)
+            }
             ForEach(store.drafts) { draft in
                 Button { store.openedRow = draft.id; store.revealFrom = frames[draft.id] ?? .zero; withAnimation(.reveal) { store.route = .draft(draft.id) }; store.host?.expand() } label: {
                     DraftRow(draft: draft, building: store.changing[draft.id] != nil, doing: store.doing[draft.id])
@@ -1031,6 +1058,8 @@ struct TalkBar: View {
             }
             return
         }
+        // An answer needs room: talking from the small sheet opens it up.
+        store.host?.expand()
         Task {
             switch store.route {
             case .home: await store.homeSay(text)
@@ -1652,5 +1681,80 @@ struct StarterChips: View {
             }
         }
         .transition(.blurReplace)
+    }
+}
+
+/// Amber in the keyboard-sized sheet: a launcher. Your projects as tiles to
+/// jump into, and the message field. Everything that needs room (Activity,
+/// the conversation, the preview) waits for the full screen.
+struct CompactView: View {
+    @EnvironmentObject var store: ChatStore
+
+    private var tools: [ToolItem] { store.overview?.tools ?? [] }
+    private var count: Int { tools.count + store.drafts.count }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            HStack(spacing: 6) {
+                Text("Amber").font(Amber.font(17, .heavy)).foregroundStyle(Amber.ink)
+                if count > 0 {
+                    Text("\(count) \(count == 1 ? "project" : "projects") in this chat")
+                        .font(Amber.font(15)).foregroundStyle(Amber.muted)
+                }
+                Spacer()
+                Button { store.host?.expand() } label: {
+                    Image(systemName: "arrow.up.left.and.arrow.down.right")
+                        .font(.system(size: 14, weight: .semibold)).foregroundStyle(Amber.ink)
+                        .frame(width: 44, height: 36).background(Capsule().fill(Amber.wash))
+                }
+                .accessibilityLabel("Open Amber full screen")
+            }
+            .padding(.horizontal, 16).padding(.top, 10)
+            ScrollView(.horizontal, showsIndicators: false) {
+                HStack(spacing: 10) {
+                    tile(letter: "+", title: "New project", filled: true) {
+                        store.host?.expand()
+                        DispatchQueue.main.asyncAfter(deadline: .now() + 0.35) { store.startNewProject() }
+                    }
+                    ForEach(store.drafts) { draft in
+                        tile(letter: String(draft.title.prefix(1)).uppercased(), title: draft.title, filled: false) { open(.draft(draft.id)) }
+                    }
+                    ForEach(tools) { tool in
+                        tile(letter: String(tool.title.prefix(1)).uppercased(), title: tool.title, filled: false) { open(.tool(tool.slug)) }
+                    }
+                }
+                .padding(.horizontal, 16)
+            }
+            Spacer(minLength: 0)
+            TalkBar()
+        }
+        .background(Amber.paper.ignoresSafeArea())
+        .task { await store.refresh() }
+    }
+
+    private func open(_ route: Route) {
+        store.revealFrom = .zero
+        store.route = route
+        store.host?.expand()
+    }
+
+    private func tile(letter: String, title: String, filled: Bool, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            VStack(alignment: .leading, spacing: 8) {
+                Text(letter).font(Amber.font(17, .heavy))
+                    .foregroundStyle(filled ? .white : Amber.ink)
+                    .frame(width: 34, height: 34)
+                    .background(RoundedRectangle(cornerRadius: 9, style: .continuous).fill(filled ? Amber.ink : Amber.wash))
+                Text(title).font(Amber.font(13, .bold)).foregroundStyle(Amber.ink)
+                    .lineLimit(2).multilineTextAlignment(.leading)
+                    .frame(maxWidth: .infinity, alignment: .topLeading)
+                Spacer(minLength: 0)
+            }
+            .padding(10)
+            .frame(width: 104, height: 104)
+            .background(RoundedRectangle(cornerRadius: 14, style: .continuous).fill(Amber.sheet))
+            .overlay(RoundedRectangle(cornerRadius: 14, style: .continuous).strokeBorder(Amber.hairline, lineWidth: 1))
+        }
+        .buttonStyle(.plain)
     }
 }

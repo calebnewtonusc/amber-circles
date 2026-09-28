@@ -1,3 +1,4 @@
+import CryptoKit
 import Messages
 import SwiftUI
 
@@ -246,8 +247,18 @@ final class ChatStore: ObservableObject {
     private var participant = ""
     private var pendingInvite: (chat: String, invite: String, slug: String?)?
 
-    private var sessionKey: String { "amber.session.\(participant)" }
-    private var localKey: String { "amber.local.\(participant)" }
+    /// This thread, not this phone. localParticipantIdentifier is the same
+    /// for this device in every thread, so keying by it alone opened one
+    /// Amber chat everywhere and the projects made with Shirley showed up in
+    /// every other thread (Caleb, 2026-09-28). A thread is its people.
+    private var thread = ""
+    private var sessionKey: String { "amber.session.t.\(thread)" }
+    private var localKey: String { "amber.local.t.\(thread)" }
+    /// Where everything lived before threads were separate, kept until the
+    /// one thread it belongs to claims it.
+    private var legacySessionKey: String { "amber.session.\(participant)" }
+    private var legacyLocalKey: String { "amber.local.\(participant)" }
+    @Published var legacySession: Session?
     private var restoring = false
 
     private func saveLocal() {
@@ -276,6 +287,8 @@ final class ChatStore: ObservableObject {
 
     func attach(_ conversation: MSConversation) {
         participant = conversation.localParticipantIdentifier.uuidString
+        let people = ([participant] + conversation.remoteParticipantIdentifiers.map(\.uuidString)).sorted().joined(separator: ",")
+        thread = SHA256.hash(data: Data(people.utf8)).prefix(12).map { String(format: "%02x", $0) }.joined()
         restoreLocal()
         // Home's chat starts empty on every open; what was said is still in
         // Amber's memory on the server, it just is not left on screen
@@ -288,7 +301,12 @@ final class ChatStore: ObservableObject {
             session = nil
             overview = nil
         }
+        legacySession = session == nil
+            ? UserDefaults.standard.data(forKey: legacySessionKey).flatMap { try? JSONDecoder().decode(Session.self, from: $0) }
+            : nil
         if let url = conversation.selectedMessage?.url, let link = Self.parse(url) {
+            // A bubble from the old shared chat claims it for this thread.
+            if session == nil, let legacy = legacySession, legacy.chat == link.chat { claimLegacy() }
             if session?.chat != link.chat {
                 pendingInvite = link
             } else if let slug = link.slug {
@@ -304,6 +322,22 @@ final class ChatStore: ObservableObject {
         name = trimmed
         UserDefaults.standard.set(trimmed, forKey: "amber.name")
         Task { await joinIfNeeded(); await refresh() }
+    }
+
+    /// Moves the projects made before threads were separate into this thread,
+    /// and only this one: the old copy is deleted as it moves.
+    func claimLegacy() {
+        guard let legacy = legacySession else { return }
+        if let local = UserDefaults.standard.data(forKey: legacyLocalKey) {
+            UserDefaults.standard.set(local, forKey: localKey)
+        }
+        UserDefaults.standard.removeObject(forKey: legacyLocalKey)
+        UserDefaults.standard.removeObject(forKey: legacySessionKey)
+        legacySession = nil
+        restoreLocal()
+        talk[""] = []
+        store(legacy)
+        Task { await refresh() }
     }
 
     private func store(_ value: Session) {
