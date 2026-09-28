@@ -454,7 +454,7 @@ struct DraftView: View {
                                 .transition(.incoming(mine: turn.mine))
                         }
                         if let live = store.liveSpeech { Bubble(text: live, mine: true, live: true) }
-                        Color.clear.frame(height: 1).id("end")
+                        Color.clear.frame(height: 12).id("end")
                     }
                     .padding(.horizontal, 20).padding(.vertical, 8)
                     .animation(.messageIn, value: store.talk[key]?.count ?? 0)
@@ -462,8 +462,16 @@ struct DraftView: View {
                 .scrollDismissesKeyboard(.interactively)
                 .contentShape(Rectangle())
                 .onTapGesture { store.host?.view.endEditing(true) }
+                // Stays on the newest message when the keyboard or the talk bar
+                // takes room, instead of leaving it under the bar.
+                .defaultScrollAnchor(.bottom)
+                .onChange(of: store.liveSpeech) { _, _ in proxy.scrollTo("end", anchor: .bottom) }
                 .onChange(of: store.talk[key]?.count ?? 0) { _, _ in
-                    withAnimation(.reveal) { proxy.scrollTo("end", anchor: .bottom) }
+                    // After the new bubble is laid out: scrolling in the same
+                    // pass stopped short of it (Caleb, 2026-09-27).
+                    DispatchQueue.main.async {
+                        withAnimation(.messageIn) { proxy.scrollTo("end", anchor: .bottom) }
+                    }
                 }
             }
         }
@@ -611,7 +619,7 @@ struct ToolView: View {
                         if let tool = store.tool(slug) {
                             ErrorLine()
                             conversation(tool)
-                            Color.clear.frame(height: 1).id("end")
+                            Color.clear.frame(height: 12).id("end")
                         } else {
                             ProgressView().frame(maxWidth: .infinity, minHeight: 120)
                         }
@@ -621,8 +629,16 @@ struct ToolView: View {
                 .scrollDismissesKeyboard(.interactively)
                 .contentShape(Rectangle())
                 .onTapGesture { store.host?.view.endEditing(true) }
+                // Stays on the newest message when the keyboard or the talk bar
+                // takes room, instead of leaving it under the bar.
+                .defaultScrollAnchor(.bottom)
+                .onChange(of: store.liveSpeech) { _, _ in proxy.scrollTo("end", anchor: .bottom) }
                 .onChange(of: store.talk[slug]?.count ?? 0) { _, _ in
-                    withAnimation(.reveal) { proxy.scrollTo("end", anchor: .bottom) }
+                    // After the new bubble is laid out: scrolling in the same
+                    // pass stopped short of it (Caleb, 2026-09-27).
+                    DispatchQueue.main.async {
+                        withAnimation(.messageIn) { proxy.scrollTo("end", anchor: .bottom) }
+                    }
                     Task { await load() }
                 }
             }
@@ -819,7 +835,7 @@ struct Bubble<Extra: View>: View {
                     if live { Caret(color: .white) }
                 }
                 .padding(.horizontal, 14).padding(.vertical, 9)
-                .background(RoundedRectangle(cornerRadius: 18, style: .continuous).fill(Amber.iMessageBlue.opacity(live ? 0.75 : 1)))
+                .background(RoundedRectangle(cornerRadius: 18, style: .continuous).fill(Amber.amber.opacity(live ? 0.75 : 1)))
             }
         } else {
             VStack(alignment: .leading, spacing: 3) {

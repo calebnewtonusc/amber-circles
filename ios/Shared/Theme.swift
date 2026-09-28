@@ -26,8 +26,8 @@ enum Amber {
     static let amberSoft = Color(red: 1, green: 244 / 255, blue: 229 / 255)
     static let link = Color(red: 0, green: 112 / 255, blue: 243 / 255)
     static let present = Color(red: 0, green: 112 / 255, blue: 243 / 255)
-    /// iMessage's own bubble colours, for the conversation.
-    static let iMessageBlue = Color(red: 10 / 255, green: 124 / 255, blue: 1)
+    /// iMessage's grey for everyone else's bubbles; yours are Amber orange
+    /// (Caleb, 2026-09-27: "make the texts the amber orange").
     static let iMessageGrey = Color(red: 233 / 255, green: 233 / 255, blue: 235 / 255)
     static let danger = Color(red: 238 / 255, green: 0, blue: 0)
 
