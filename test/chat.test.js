@@ -91,6 +91,23 @@ test("comments work like Google Docs: reply to one, resolve the thread", async (
   assert.equal((await call(`/api/tools/${slug}/notes/${first}/resolve`, { method: "POST", chat: other.ruth.token, body: {} })).status, 404);
 });
 
+test("pins keep their anchor, and activity separates edits, publishes and shares", async () => {
+  const { stan, ruth } = await startChat();
+  const slug = (await call("/api/tools", { method: "POST", chat: ruth.token, body: { title: "Rides", circle: stan.chat, html: page("v1") } })).json.slug;
+  const pin = await call(`/api/tools/${slug}/notes`, {
+    method: "POST", chat: stan.token,
+    body: { text: "Bigger", anchor: { selector: "body > h1:nth-of-type(1)", fx: 1.7, fy: 0.25, label: "Rides", evil: "x" } },
+  });
+  assert.equal(pin.status, 200);
+  const notes = (await call(`/api/tools/${slug}/notes`, { chat: ruth.token })).json.notes;
+  assert.deepEqual(notes[0].anchor, { selector: "body > h1:nth-of-type(1)", fx: 1, fy: 0.25, label: "Rides" }, "clamped, and nothing extra kept");
+  assert.equal((await call(`/api/tools/${slug}/shared`, { method: "POST", chat: ruth.token, body: {} })).status, 200);
+  const activity = (await call(`/api/tools/${slug}/activity`, { chat: stan.token })).json.activity;
+  assert.deepEqual(activity.map((a) => [a.kind, a.name]), [["shared", "Ruth"]]);
+  const other = await startChat();
+  assert.equal((await call(`/api/tools/${slug}/activity`, { chat: other.ruth.token })).status, 404);
+});
+
 test("someone in a chat cannot delete the chat's account or remove people; the starter can remove the chat", async () => {
   const { stan, ruth } = await startChat();
   assert.equal((await call("/api/owner", { method: "DELETE", chat: ruth.token })).status, 403);

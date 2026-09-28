@@ -1102,6 +1102,7 @@ app.post("/api/build", async (c) => {
           "update tools set draft_html = $3, draft_request = $4 where owner_id = $1 and slug = $2",
           [owner.id, existing.slug, html, request],
         );
+        await recordActivity(owner, existing.slug, "edited", request);
         await send("done", { slug: existing.slug, draft: true });
       } else {
         const result = await publishTool(owner, {
@@ -1116,6 +1117,7 @@ app.post("/api/build", async (c) => {
             result.slug,
             owner.chatMember.name,
           ]);
+        await recordActivity(owner, result.slug, "made", request, 1);
         await send("done", { slug: result.slug, version: 1 });
       }
     } catch (error) {
@@ -1148,6 +1150,7 @@ app.post("/api/tools/:slug/keep", async (c) => {
     [owner.id, c.req.param("slug")],
   );
   await logEvent(owner, c.req.param("slug"), `Kept: ${rows[0].draft_request || "a change"}`);
+  await recordActivity(owner, c.req.param("slug"), "published", rows[0].draft_request || "", result.version);
   return c.json(result);
 });
 
@@ -1156,7 +1159,10 @@ app.post("/api/tools/:slug/discard", async (c) => {
   const {
     rows: [waiting],
   } = await pool.query("select draft_request from tools where owner_id = $1 and slug = $2", [owner.id, c.req.param("slug")]);
-  if (waiting?.draft_request) await logEvent(owner, c.req.param("slug"), `Declined: ${waiting.draft_request}`);
+  if (waiting?.draft_request) {
+    await logEvent(owner, c.req.param("slug"), `Declined: ${waiting.draft_request}`);
+    await recordActivity(owner, c.req.param("slug"), "declined", waiting.draft_request);
+  }
   await pool.query(
     "update tools set draft_html = null, draft_request = null where owner_id = $1 and slug = $2",
     [owner.id, c.req.param("slug")],
@@ -1712,6 +1718,14 @@ app.delete("/api/chats/:id", async (c) => {
 // back as "moved"; chewbacca bin/people, ported from Amber's identity
 // service). Here that is the difference between a wish, a kept change and one
 // that was tried and put back, so those land in the conversation as events.
+async function recordActivity(owner, slug, kind, text = "", version = null) {
+  await pool.query(
+    `insert into tool_activity (id, tool_id, member_id, kind, text, version)
+     select $1, id, $4, $5, $6, $7 from tools where owner_id = $2 and slug = $3`,
+    [newId("act"), owner.id, slug, owner.chatMember?.id || null, kind, String(text).slice(0, 300), version],
+  );
+}
+
 async function logEvent(owner, slug, text) {
   const { rows } = await pool.query("select id, circle_id from tools where owner_id = $1 and slug = $2", [owner.id, slug]);
   if (!rows[0]) return;
@@ -1737,11 +1751,44 @@ app.get("/api/tools/:slug/notes", async (c) => {
   const owner = await requireOwner(c);
   const tool = await ownedTool(owner, c.req.param("slug"));
   const { rows } = await pool.query(
-    `select n.id, n.text, n.created_at, m.name, n.parent_id, n.resolved_at from tool_notes n
+    `select n.id, n.text, n.created_at, m.name, n.parent_id, n.resolved_at, n.anchor from tool_notes n
        left join members m on m.id = n.member_id where n.tool_id = $1 order by n.created_at`,
     [tool.id],
   );
   return c.json({ notes: rows });
+});
+
+// A pin's anchor, trimmed to what the preview needs to find the element
+// again. Anything else in it is dropped rather than stored.
+function pinAnchor(raw) {
+  if (!raw || typeof raw !== "object" || typeof raw.selector !== "string" || !raw.selector) return null;
+  const unit = (n) => (Number.isFinite(Number(n)) ? Math.min(1, Math.max(0, Number(n))) : 0.5);
+  return {
+    selector: raw.selector.slice(0, 500),
+    fx: unit(raw.fx),
+    fy: unit(raw.fy),
+    label: String(raw.label || "").slice(0, 200),
+  };
+}
+
+// Everything that happened to one app, newest last.
+app.get("/api/tools/:slug/activity", async (c) => {
+  const owner = await requireOwner(c);
+  const tool = await ownedTool(owner, c.req.param("slug"));
+  const { rows } = await pool.query(
+    `select a.id, a.kind, a.text, a.version, a.created_at, m.name from tool_activity a
+       left join members m on m.id = a.member_id where a.tool_id = $1 order by a.created_at limit 200`,
+    [tool.id],
+  );
+  return c.json({ activity: rows });
+});
+
+// The iMessage app says when a bubble for this app was sent to the chat.
+app.post("/api/tools/:slug/shared", async (c) => {
+  const owner = await requireOwner(c);
+  await ownedTool(owner, c.req.param("slug"));
+  await recordActivity(owner, c.req.param("slug"), "shared");
+  return c.json({ ok: true });
 });
 
 // Resolve or reopen a comment. Resolving closes the thread, replies and all.
@@ -1770,8 +1817,8 @@ app.post("/api/tools/:slug/notes", async (c) => {
     parent = rows[0].id;
   }
   await pool.query(
-    "insert into tool_notes (id, tool_id, member_id, text, parent_id) values ($1, $2, $3, $4, $5)",
-    [id, tool.id, owner.chatMember?.id || null, requireText(body.text, "note", 1000), parent],
+    "insert into tool_notes (id, tool_id, member_id, text, parent_id, anchor) values ($1, $2, $3, $4, $5, $6)",
+    [id, tool.id, owner.chatMember?.id || null, requireText(body.text, "note", 1000), parent, parent ? null : pinAnchor(body.anchor)],
   );
   return c.json({ id });
 });

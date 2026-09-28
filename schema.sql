@@ -156,6 +156,24 @@ create index if not exists tool_notes_tool_idx on tool_notes(tool_id, created_at
 -- comment, and resolving a comment closes its whole thread.
 alter table tool_notes add column if not exists parent_id text references tool_notes(id) on delete cascade;
 alter table tool_notes add column if not exists resolved_at timestamptz;
+-- A pin: which element on the page a comment is about, and where on it.
+alter table tool_notes add column if not exists anchor jsonb;
+
+-- What happened to each app, for its Activity list. Edited means a change
+-- only its maker has seen; published means it went live on the site;
+-- shared means a bubble for it was sent to the chat. Caleb, 2026-09-27:
+-- "there should be a distinguishment between when something is published to
+-- the website vs when it is just sent to the chat".
+create table if not exists tool_activity (
+  id          text primary key,
+  tool_id     text not null references tools(id) on delete cascade,
+  member_id   text references members(id) on delete set null,
+  kind        text not null,
+  text        text not null default '',
+  version     integer,
+  created_at  timestamptz not null default now()
+);
+create index if not exists tool_activity_tool_idx on tool_activity(tool_id, created_at);
 
 -- The conversation with each tool, kept. Chewbacca's voice is "connected to
 -- the brain both ways" (docs/VOICE-DESIGN.md): every turn is logged and read
