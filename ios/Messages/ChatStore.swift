@@ -73,6 +73,10 @@ final class ChatStore: ObservableObject {
     @Published var error: String?
     @Published var building: BuildState?
     @Published var route: Route = .home { didSet { saveLocal() } }
+    /// Sign-in, Face ID or the name step is showing.
+    var firstRun: Bool {
+        personKey == nil || (!unlocked && !(personKey ?? "").isEmpty) || name.isEmpty
+    }
     /// The row an app is opening from, so its screen grows out of that row.
     var revealFrom: CGRect = .zero
     @Published var loading = false

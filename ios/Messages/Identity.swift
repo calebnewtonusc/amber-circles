@@ -44,14 +44,8 @@ struct SignInView: View {
                 // them (Caleb, 2026-09-27). Centering moved them, because each
                 // step has a different amount under its title.
                 if tall { Color.clear.frame(height: Onboarding.headerTop) }
-            HStack(alignment: .center, spacing: 14) {
-                EggSlot(rank: 1).frame(width: 44, height: 50)
-                HeadlineSlot(rank: 1, text: "Let's build together", size: 30)
-            }
-            // A fixed row: the title centres on the egg, and the egg stays
-            // put whether the title is one line or two.
-            .frame(height: Onboarding.headerHeight)
-            .frame(maxWidth: .infinity)
+                // Room for the egg and headline, drawn once above both steps.
+                Color.clear.frame(height: Onboarding.headerHeight)
             SignInWithAppleButton(.signIn) { request in
                 request.requestedScopes = [.fullName]
             } onCompletion: { result in
@@ -120,8 +114,6 @@ struct LockView: View {
     var body: some View {
         VStack(spacing: 20) {
             Spacer()
-            EggSlot(rank: 2).frame(width: 56, height: 64)
-            Text("Amber").font(Amber.font(26, .heavy)).foregroundStyle(Amber.ink)
             Button("Unlock with Face ID") { unlock() }
                 .buttonStyle(BlockButton(primary: true))
             Spacer()

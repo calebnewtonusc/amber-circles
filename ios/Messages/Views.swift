@@ -55,7 +55,23 @@ private struct RevealMask: ViewModifier {
     func body(content: Content) -> some View { content.clipShape(RevealShape(from: from, progress: progress)) }
 }
 
+extension Animation {
+    /// New messages only: a quick spring with a little give, the way a text
+    /// lands in Messages (Caleb, 2026-09-27: "animate from the bottom like
+    /// texts usually do when they come in").
+    static let messageIn = Animation.spring(response: 0.38, dampingFraction: 0.78)
+}
+
 extension AnyTransition {
+    /// A message rises from the bottom and grows out of its own corner.
+    static func incoming(mine: Bool) -> AnyTransition {
+        .asymmetric(
+            insertion: .scale(scale: 0.6, anchor: mine ? .bottomTrailing : .bottomLeading)
+                .combined(with: .offset(y: 24))
+                .combined(with: .opacity),
+            removal: .identity)
+    }
+
     static func reveal(from: CGRect) -> AnyTransition {
         .modifier(active: RevealMask(from: from, progress: 0), identity: RevealMask(from: from, progress: 1))
     }
@@ -68,6 +84,11 @@ struct RootView: View {
     var body: some View {
         ZStack {
             Amber.paper.ignoresSafeArea()
+            // The top bar is fixed like the talk bar: screens change beneath
+            // it and nothing animates over it (Caleb, 2026-09-27).
+            VStack(spacing: 0) {
+            if !store.firstRun { TopBar() }
+            ZStack {
             // Between steps the amber pill is one object that slides and scales
             // to its next place, and the words around it blur across. The mask
             // tried first chewed the old screen away from the bottom (Caleb,
@@ -102,6 +123,9 @@ struct RootView: View {
                 }
                 .transition(.blurReplace).zIndex(5)
             }
+            if store.firstRun { FirstRunHeader().zIndex(10) }
+            }
+            }
         }
         .coordinateSpace(.named("root"))
         // The one egg. Screens only say where it should be; it is drawn here,
@@ -119,21 +143,6 @@ struct RootView: View {
                         // second behind the text whenever the window was dragged.
                         .allowsHitTesting(false)
                         .accessibilityHidden(true)
-                }
-            }
-        }
-        // The one headline, drawn once like the egg. When the words change it
-        // deletes what it said and types the next thing (Caleb, 2026-09-27:
-        // "make it look like someone is typing the big text, then deletes it,
-        // then types the second text").
-        .overlayPreferenceValue(HeadlineKey.self) { slots in
-            GeometryReader { proxy in
-                if let slot = slots.max(by: { $0.rank < $1.rank }) {
-                    let frame = proxy[slot.anchor]
-                    RetypingText(target: slot.text, size: slot.size)
-                        .frame(width: frame.width, height: frame.height, alignment: .leading)
-                        .position(x: frame.midX, y: frame.midY)
-                        .allowsHitTesting(false)
                 }
             }
         }
@@ -174,15 +183,8 @@ struct NameView: View {
                 // them (Caleb, 2026-09-27). Centering moved them, because each
                 // step has a different amount under its title.
                 if tall { Color.clear.frame(height: Onboarding.headerTop) }
-                HStack(alignment: .center, spacing: 14) {
-                    EggSlot(rank: 3).frame(width: 44, height: 50)
-                    HeadlineSlot(rank: 3, text: "What should the chat call you?", size: 30)
-                }
-                // A fixed row: the title centres on the egg, and the egg stays
-                // put whether the title is one line or two.
-                .frame(height: Onboarding.headerHeight)
-                .frame(maxWidth: .infinity)
-                // The box opens out from the left, then its hint types itself.
+                // Room for the egg and headline, drawn once above both steps.
+                Color.clear.frame(height: Onboarding.headerHeight)
                 TextField(hint, text: $text)
                     .font(Amber.font(22)).padding(14).frame(minHeight: 60).block()
                     .mask(alignment: .leading) {
@@ -242,7 +244,6 @@ struct HomeView: View {
         VStack(spacing: 0) {
             ScrollView {
                 VStack(alignment: .leading, spacing: 20) {
-                    HeadlineSlot(rank: 5, text: "Made in this chat", size: 30)
                     ErrorLine()
                     apps
                     boardSection
@@ -405,15 +406,6 @@ struct DraftView: View {
     var body: some View {
         VStack(spacing: 0) {
             VStack(alignment: .leading, spacing: 12) {
-                HStack(spacing: 10) {
-                    Button { store.host?.view.endEditing(true); withAnimation(.reveal) { store.route = .home } } label: {
-                        Image(systemName: "chevron.left").font(.system(size: 16, weight: .bold)).foregroundStyle(Amber.ink)
-                            .frame(width: 36, height: 36).background(Circle().fill(Amber.wash))
-                    }
-                    .accessibilityLabel("Everything in this chat")
-                    HeadlineSlot(rank: 6, text: store.drafts.first { $0.id == key }?.title ?? "New app", size: 22)
-                    Spacer(minLength: 0)
-                }
                 if store.changing[key] != nil {
                     LivePanel(slug: nil, buildKey: key, expanded: $watching)
                         .transition(.blurReplace)
@@ -426,12 +418,13 @@ struct DraftView: View {
                     VStack(alignment: .leading, spacing: 12) {
                         ForEach(store.talk[key] ?? []) { turn in
                             Bubble(text: turn.text, mine: turn.mine, who: turn.who, typing: turn.fresh)
-                                .transition(.blurReplace)
+                                .transition(.incoming(mine: turn.mine))
                         }
                         if let live = store.liveSpeech { Bubble(text: live, mine: true, live: true) }
                         Color.clear.frame(height: 1).id("end")
                     }
                     .padding(.horizontal, 20).padding(.vertical, 8)
+                    .animation(.messageIn, value: store.talk[key]?.count ?? 0)
                 }
                 .scrollDismissesKeyboard(.interactively)
                 .contentShape(Rectangle())
@@ -503,10 +496,6 @@ struct BuildingView: View {
     var body: some View {
         TimelineView(.periodic(from: .now, by: 1)) { context in
             VStack(alignment: .leading, spacing: 18) {
-                HStack(alignment: .center, spacing: 14) {
-                    EggSlot(rank: 4).frame(width: 44, height: 50)
-                    HeadlineSlot(rank: 4, text: "Making it", size: 32)
-                }
                 Text("\u{201C}\(state.request)\u{201D}").font(Amber.font(19, .bold)).foregroundStyle(Amber.ink)
                     .padding(.leading, 12)
                     .overlay(Capsule().fill(Amber.hairline).frame(width: 3), alignment: .leading)
@@ -565,15 +554,6 @@ struct ToolView: View {
             // Pinned above the conversation, so when the preview grows the
             // chat moves down beneath it instead of scrolling away.
             VStack(alignment: .leading, spacing: 12) {
-                HStack(spacing: 10) {
-                    Button { store.host?.view.endEditing(true); withAnimation(.reveal) { store.route = .home } } label: {
-                        Image(systemName: "chevron.left").font(.system(size: 16, weight: .bold)).foregroundStyle(Amber.ink)
-                            .frame(width: 36, height: 36).background(Circle().fill(Amber.wash))
-                    }
-                    .accessibilityLabel("Everything in this chat")
-                    HeadlineSlot(rank: 6, text: store.tool(slug)?.title ?? "", size: 22)
-                    Spacer(minLength: 0)
-                }
                 if store.tool(slug) != nil {
                     VStack(spacing: 0) {
                         LivePanel(slug: slug, expanded: $previewing)
@@ -645,7 +625,7 @@ struct ToolView: View {
         VStack(alignment: .leading, spacing: 10) {
             ForEach(store.talk[slug] ?? []) { turn in
                 Bubble(text: turn.text, mine: turn.mine, who: turn.who, typing: turn.fresh)
-                    .transition(.blurReplace)
+                    .transition(.incoming(mine: turn.mine))
             }
             if let live = store.liveSpeech {
                 Bubble(text: live, mine: true, live: true)
@@ -686,6 +666,7 @@ struct ToolView: View {
                 .font(Amber.font(17, .bold)).foregroundStyle(Amber.ink).tint(Amber.ink)
             }
         }
+        .animation(.messageIn, value: store.talk[slug]?.count ?? 0)
     }
 
     private func load() async {
@@ -1051,38 +1032,8 @@ enum Onboarding {
     /// Where the egg and title sit on every first-run step once iMessage
     /// gives Amber the full screen: about a third of the way down.
     static let headerTop: CGFloat = 200
-    /// Two lines of the 30pt title.
+    /// Two lines of the 30pt headline.
     static let headerHeight: CGFloat = 84
-}
-
-struct HeadlineValue {
-    let rank: Int
-    let text: String
-    let size: CGFloat
-    let anchor: Anchor<CGRect>
-}
-
-struct HeadlineKey: PreferenceKey {
-    static let defaultValue: [HeadlineValue] = []
-    static func reduce(value: inout [HeadlineValue], nextValue: () -> [HeadlineValue]) { value += nextValue() }
-}
-
-/// Holds the headline's room in the layout; the words are drawn by the
-/// one RetypingText above every screen.
-struct HeadlineSlot: View {
-    let rank: Int
-    let text: String
-    let size: CGFloat
-    var body: some View {
-        Text(text).font(Amber.font(size, .heavy)).headline()
-            .fixedSize(horizontal: false, vertical: true)
-            .hidden()
-            .anchorPreference(key: HeadlineKey.self, value: .bounds) {
-                [HeadlineValue(rank: rank, text: text, size: size, anchor: $0)]
-            }
-            .accessibilityLabel(text)
-            .accessibilityAddTraits(.isHeader)
-    }
 }
 
 /// Deletes what it says, then types the new words, with an amber caret
@@ -1090,14 +1041,18 @@ struct HeadlineSlot: View {
 struct RetypingText: View {
     let target: String
     let size: CGFloat
+    /// First-run headlines wrap to two lines; the top bar's shrinks to one.
+    var wraps = false
     @State private var shown = ""
     @State private var working = false
 
     var body: some View {
         (Text(shown) + Text(working ? "|" : "").foregroundColor(Amber.amber))
             .font(Amber.font(size, .heavy)).headline().foregroundStyle(Amber.ink)
-            .fixedSize(horizontal: false, vertical: true)
-            .accessibilityHidden(true)
+            .lineLimit(wraps ? 2 : 1).minimumScaleFactor(wraps ? 1 : 0.55)
+            .fixedSize(horizontal: false, vertical: wraps)
+            .accessibilityLabel(target)
+            .accessibilityAddTraits(.isHeader)
             .task(id: target) { await retype() }
     }
 
@@ -1117,5 +1072,68 @@ struct RetypingText: View {
             if Task.isCancelled { return }
         }
         working = false
+    }
+}
+
+/// The fixed bar at the top: back when inside something, the egg during first
+/// run, and the headline, which deletes and retypes whenever the screen changes.
+struct TopBar: View {
+    @EnvironmentObject var store: ChatStore
+
+    private var title: String {
+        if store.building != nil { return "Making it" }
+        switch store.route {
+        case .home: return "Made in this chat"
+        case .tool(let slug): return store.tool(slug)?.title ?? ""
+        case .draft(let key): return store.drafts.first { $0.id == key }?.title ?? "New project"
+        }
+    }
+
+    var body: some View {
+        HStack(spacing: 12) {
+            if store.route != .home {
+                Button { store.host?.view.endEditing(true); withAnimation(.reveal) { store.route = .home } } label: {
+                    Image(systemName: "chevron.left").font(.system(size: 16, weight: .bold)).foregroundStyle(Amber.ink)
+                        .frame(width: 36, height: 36).background(Circle().fill(Amber.wash))
+                }
+                .accessibilityLabel("Everything in this chat")
+            }
+            RetypingText(target: title, size: 26)
+                .frame(maxWidth: .infinity, alignment: .leading)
+        }
+        .frame(height: 44)
+        .padding(.horizontal, 20).padding(.top, 16).padding(.bottom, 10)
+        .background(Amber.paper)
+        .zIndex(10)
+    }
+}
+
+/// The egg and headline for sign-in and the name step. Drawn once above both,
+/// at the same place, so going from one to the other the words delete and
+/// retype and nothing else moves.
+struct FirstRunHeader: View {
+    @EnvironmentObject var store: ChatStore
+
+    private var title: String {
+        if store.personKey == nil { return "Let's build together" }
+        if !store.unlocked && !(store.personKey ?? "").isEmpty { return "Welcome back" }
+        return "What should the chat call you?"
+    }
+
+    var body: some View {
+        TallAware { tall in
+            VStack(alignment: .leading, spacing: tall ? 28 : 18) {
+                if tall { Color.clear.frame(height: Onboarding.headerTop) }
+                HStack(alignment: .center, spacing: 14) {
+                    EggSlot(rank: 1).frame(width: 44, height: 50)
+                    RetypingText(target: title, size: 30, wraps: true)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                }
+                .frame(height: Onboarding.headerHeight)
+                Spacer()
+            }
+            .padding(20)
+        }
+        .allowsHitTesting(false)
     }
 }
