@@ -128,6 +128,20 @@ struct RootView: View {
             }
         }
         .coordinateSpace(.named("root"))
+        // One headline for the whole app. First run and the top bar only say
+        // where it goes, so on the way in the question travels from the
+        // middle to the top while it deletes, then types the new words there.
+        .overlayPreferenceValue(HeadlineKey.self) { slots in
+            GeometryReader { proxy in
+                if let slot = slots.max(by: { $0.rank < $1.rank }) {
+                    let frame = proxy[slot.anchor]
+                    RetypingText(target: slot.text, size: slot.size, wraps: slot.wraps)
+                        .frame(width: frame.width, height: frame.height, alignment: .leading)
+                        .position(x: frame.midX, y: frame.midY)
+                        .allowsHitTesting(false)
+                }
+            }
+        }
         // The one egg. Screens only say where it should be; it is drawn here,
         // above all of them, so it moves and scales between places instead of
         // fading out on one screen and in on the next (Caleb, 2026-09-27).
@@ -1051,8 +1065,7 @@ struct RetypingText: View {
             .font(Amber.font(size, .heavy)).headline().foregroundStyle(Amber.ink)
             .lineLimit(wraps ? 2 : 1).minimumScaleFactor(wraps ? 1 : 0.55)
             .fixedSize(horizontal: false, vertical: wraps)
-            .accessibilityLabel(target)
-            .accessibilityAddTraits(.isHeader)
+            .accessibilityHidden(true)
             .task(id: target) { await retype() }
     }
 
@@ -1098,8 +1111,8 @@ struct TopBar: View {
                 }
                 .accessibilityLabel("Everything in this chat")
             }
-            RetypingText(target: title, size: 26)
-                .frame(maxWidth: .infinity, alignment: .leading)
+            HeadlineSlot(rank: 2, text: title, size: 26)
+                .frame(maxWidth: .infinity)
         }
         .frame(height: 44)
         .padding(.horizontal, 20).padding(.top, 16).padding(.bottom, 10)
@@ -1126,8 +1139,8 @@ struct FirstRunHeader: View {
                 if tall { Color.clear.frame(height: Onboarding.headerTop) }
                 HStack(alignment: .center, spacing: 14) {
                     EggSlot(rank: 1).frame(width: 44, height: 50)
-                    RetypingText(target: title, size: 30, wraps: true)
-                        .frame(maxWidth: .infinity, alignment: .leading)
+                    HeadlineSlot(rank: 1, text: title, size: 30, wraps: true)
+                        .frame(maxWidth: .infinity)
                 }
                 .frame(height: Onboarding.headerHeight)
                 Spacer()
@@ -1135,5 +1148,35 @@ struct FirstRunHeader: View {
             .padding(20)
         }
         .allowsHitTesting(false)
+    }
+}
+
+struct HeadlineValue {
+    let rank: Int
+    let text: String
+    let size: CGFloat
+    let wraps: Bool
+    let anchor: Anchor<CGRect>
+}
+
+struct HeadlineKey: PreferenceKey {
+    static let defaultValue: [HeadlineValue] = []
+    static func reduce(value: inout [HeadlineValue], nextValue: () -> [HeadlineValue]) { value += nextValue() }
+}
+
+/// Marks where the headline goes; its parent sets the size.
+struct HeadlineSlot: View {
+    let rank: Int
+    let text: String
+    let size: CGFloat
+    var wraps = false
+    var body: some View {
+        Color.clear
+            .anchorPreference(key: HeadlineKey.self, value: .bounds) {
+                [HeadlineValue(rank: rank, text: text, size: size, wraps: wraps, anchor: $0)]
+            }
+            .accessibilityElement()
+            .accessibilityLabel(text)
+            .accessibilityAddTraits(.isHeader)
     }
 }
