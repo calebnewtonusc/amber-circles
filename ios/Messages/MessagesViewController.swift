@@ -68,6 +68,14 @@ final class MessagesViewController: MSMessagesAppViewController {
         store.attach(conversation)
     }
 
+    /// Switch layouts as the sheet starts moving, on a curve close to the
+    /// sheet's own, so the two travel together. Switching in didTransition
+    /// waited for the sheet to finish and then snapped (Caleb, 2026-09-28).
+    override func willTransition(to presentationStyle: MSMessagesAppPresentationStyle) {
+        super.willTransition(to: presentationStyle)
+        withAnimation(.smooth(duration: 0.38)) { store.expanded = presentationStyle == .expanded }
+    }
+
     override func didTransition(to presentationStyle: MSMessagesAppPresentationStyle) {
         super.didTransition(to: presentationStyle)
         store.expanded = presentationStyle == .expanded

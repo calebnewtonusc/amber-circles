@@ -124,32 +124,30 @@ struct RootView: View {
                 // same amber/nav bar, that shouldn't have to reanimate").
                 // In the keyboard-sized sheet Amber is a launcher; the full
                 // app needs the full screen (Caleb, 2026-09-28).
-                Group {
-                if !store.expanded {
-                    CompactView().transition(.blurReplace)
-                } else {
+                // One message field for both sizes: only what is above it
+                // changes, and matching pieces morph into each other (Caleb,
+                // 2026-09-28: "why is the message pill reanimating").
                 VStack(spacing: 0) {
                     ZStack {
-                        // Home never leaves. Rebuilt on the way back, every row
-                        // popped in at once (Caleb, 2026-09-27: "the new project
-                        // text and little star appear super abruptly").
-                        HomeView().zIndex(0)
-                        switch store.route {
-                        case .home: EmptyView()
-                        case .tool(let slug):
-                            ToolView(slug: slug, speaker: store.speaker)
-                                .transition(.reveal(from: store.revealFrom)).zIndex(1)
-                        case .draft(let key):
-                            DraftView(key: key).transition(.reveal(from: store.revealFrom)).zIndex(1)
+                        if store.expanded {
+                            // Home never leaves. Rebuilt on the way back, every
+                            // row popped in at once (Caleb, 2026-09-27).
+                            HomeView().zIndex(0)
+                            switch store.route {
+                            case .home: EmptyView()
+                            case .tool(let slug):
+                                ToolView(slug: slug, speaker: store.speaker)
+                                    .transition(.reveal(from: store.revealFrom)).zIndex(1)
+                            case .draft(let key):
+                                DraftView(key: key).transition(.reveal(from: store.revealFrom)).zIndex(1)
+                            }
+                        } else {
+                            CompactView()
                         }
                     }
                     .coordinateSpace(.named("stage"))
                     TalkBar()
                 }
-                .transition(.blurReplace)
-                }
-                }
-                .animation(.reveal, value: store.expanded)
                 .transition(.blurReplace)
                 .zIndex(5)
             }
@@ -285,6 +283,7 @@ struct ErrorLine: View {
 
 struct HomeView: View {
     @EnvironmentObject var store: ChatStore
+    @Environment(\.titles) private var titles
     @State private var request = ""
     /// Where each row sits on screen, so opening it grows from that row.
     @State private var frames: [String: CGRect] = [:]
@@ -381,6 +380,7 @@ struct HomeView: View {
                     DraftRow(draft: draft, building: store.changing[draft.id] != nil, doing: store.doing[draft.id])
                 }
                 .buttonStyle(.plain)
+                .sharedTitle("proj-\(draft.id)", in: titles)
                 .onGeometryChange(for: CGRect.self) { $0.frame(in: .named("stage")) } action: { frames[draft.id] = $0; store.rowFrames[draft.id] = $0 }
                 .transition(.blurReplace)
             }
@@ -389,6 +389,7 @@ struct HomeView: View {
                     AppRow(tool: tool, unshared: store.unpublished.contains(tool.slug))
                 }
                 .buttonStyle(.plain)
+                .sharedTitle("proj-\(tool.slug)", in: titles)
                 .onGeometryChange(for: CGRect.self) { $0.frame(in: .named("stage")) } action: { frames[tool.slug] = $0; store.rowFrames[tool.slug] = $0 }
             }
             if store.loading && (store.overview?.tools ?? []).isEmpty {
@@ -1345,6 +1346,7 @@ struct RetypingText: View {
 /// run, and the headline, which deletes and retypes whenever the screen changes.
 struct TopBar: View {
     @EnvironmentObject var store: ChatStore
+    @Environment(\.titles) private var titles
     @State private var editing = false
     @State private var newName = ""
     @FocusState private var nameFocused: Bool
@@ -1411,6 +1413,7 @@ struct TopBar: View {
                     Image(systemName: "plus").font(.system(size: 18, weight: .semibold)).foregroundStyle(Amber.ink)
                         .frame(width: 44, height: 44).background(Circle().fill(Amber.wash))
                 }
+                .sharedTitle("new", in: titles)
                 .accessibilityLabel("New project")
                 .onGeometryChange(for: CGRect.self) { $0.frame(in: .named("stage")) } action: { store.rowFrames["__plus"] = $0 }
                 .transition(.blurReplace)
@@ -1662,11 +1665,12 @@ struct HomeActivityTray: View {
 struct StarterChips: View {
     @EnvironmentObject var store: ChatStore
     private let starters: [(String, String)] = [
-        ("A sign-up sheet for an event", "Make a sign-up sheet for our next event"),
-        ("A poll for the group", "Make a poll so the group can vote"),
-        ("Plan the next hangout", "Build a page to plan our next hangout"),
-        ("Split costs between us", "Make a tracker to split costs between us"),
+        ("Sign-up sheet", "Make a sign-up sheet for our next event"),
+        ("Group poll", "Make a poll so the group can vote"),
+        ("Plan a hangout", "Build a page to plan our next hangout"),
+        ("Split costs", "Make a tracker to split costs between us"),
     ]
+    @Environment(\.titles) private var titles
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
             Text("Start with one").font(Amber.font(13, .bold)).foregroundStyle(Amber.muted)
@@ -1691,6 +1695,7 @@ struct StarterChips: View {
 /// off"), so everything here is one pill high.
 struct CompactView: View {
     @EnvironmentObject var store: ChatStore
+    @Environment(\.titles) private var titles
 
     private var tools: [ToolItem] { store.overview?.tools ?? [] }
     private var count: Int { tools.count + store.drafts.count }
@@ -1704,7 +1709,10 @@ struct CompactView: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
             HStack(spacing: 6) {
-                Text("Amber").font(Amber.font(20, .heavy)).foregroundStyle(Amber.ink)
+                // The same headline as full screen: it retypes into "Made in
+                // this chat" as it moves up.
+                Text("Amber").font(Amber.font(20, .heavy)).headline().fixedSize().hidden()
+                    .overlay(HeadlineSlot(rank: 2, text: "Amber", size: 20))
                 Text(count == 0 ? "Build something for this chat" : "\(count) \(count == 1 ? "project" : "projects") here")
                     .font(Amber.font(15)).foregroundStyle(Amber.muted).lineLimit(1)
                 Spacer(minLength: 8)
@@ -1728,8 +1736,9 @@ struct CompactView: View {
                         .background(Capsule().fill(Amber.ink))
                 }
                 .buttonStyle(.plain)
-                ForEach(store.drafts) { draft in pill(draft.title) { open(.draft(draft.id)) } }
-                ForEach(tools) { tool in pill(tool.title) { open(.tool(tool.slug)) } }
+                .sharedTitle("new", in: titles)
+                ForEach(store.drafts) { draft in pill(draft.title) { open(.draft(draft.id)) }.sharedTitle("proj-\(draft.id)", in: titles) }
+                ForEach(tools) { tool in pill(tool.title) { open(.tool(tool.slug)) }.sharedTitle("proj-\(tool.slug)", in: titles) }
             }
             row {
                 ForEach(starters, id: \.0) { label, prompt in
@@ -1745,7 +1754,6 @@ struct CompactView: View {
                 }
             }
             Spacer(minLength: 0)
-            TalkBar()
         }
         .padding(.top, 8)
         .background(Amber.paper.ignoresSafeArea())
