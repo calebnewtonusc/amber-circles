@@ -31,7 +31,6 @@ struct LivePanel: View {
                      html: building ? liveHTML : nil)
                 .id(slug.map { "\($0)-\(store.tool($0)?.version ?? 0)-\(store.tool($0)?.has_draft == true)" } ?? "new")
                 .frame(height: height)
-                .opacity(expanded ? 1 : 0.001)
                 .allowsHitTesting(expanded)
             // Collapsed it is a button that says what is happening; opened,
             // the header gets out of the way and only a small X is left in the
@@ -54,17 +53,19 @@ struct LivePanel: View {
                 }
                 .padding(10)
             } else {
-                header
+                // Opaque, so the loaded app underneath stays hidden until the
+                // mask grows; nothing about the app itself ever fades.
+                header.background(Amber.sheet)
             }
         }
         .frame(height: expanded ? height : 60, alignment: .top)
         .background(RoundedRectangle(cornerRadius: expanded ? 20 : 30, style: .continuous).fill(Amber.sheet))
         .clipShape(RoundedRectangle(cornerRadius: expanded ? 20 : 30, style: .continuous))
         .overlay(edge)
-        .shadow(color: (building ? Amber.amber : Color.black).opacity(building ? 0.18 : 0.06), radius: building ? 18 : 12, y: 4)
+        .shadow(color: Color.black.opacity(0.06), radius: 12, y: 4)
         .contentShape(Rectangle())
         .onTapGesture { if !expanded { open() } }
-        .animation(.spring(response: 0.55, dampingFraction: 0.86, blendDuration: 0.2), value: expanded)
+        .animation(.reveal, value: expanded)
     }
 
     /// The boundary. While it builds, a soft amber light travels around the
@@ -97,14 +98,10 @@ struct LivePanel: View {
                     Image(systemName: "eye").font(.system(size: 15, weight: .semibold)).foregroundStyle(Amber.ink)
                 }
             }
-            VStack(alignment: .leading, spacing: 1) {
-                Text("Preview").font(Amber.font(17, .heavy)).foregroundStyle(Amber.ink)
-                Text(status).font(Amber.font(14)).foregroundStyle(building ? Amber.link : Amber.muted)
-                    .lineLimit(1).contentTransition(.opacity)
-                    .animation(.easeOut(duration: 0.2), value: status)
-            }
+            Text(building ? status : "Preview").font(Amber.font(17, .heavy)).foregroundStyle(Amber.ink)
+                .lineLimit(1).contentTransition(.opacity)
+                .animation(.easeOut(duration: 0.2), value: status)
             Spacer(minLength: 8)
-            Image(systemName: "chevron.down").font(.system(size: 14, weight: .bold)).foregroundStyle(Amber.muted)
         }
         .padding(.horizontal, 12)
         .frame(height: 60)

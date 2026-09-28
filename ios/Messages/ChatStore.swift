@@ -38,6 +38,9 @@ struct Turn: Identifiable, Equatable, Codable {
     var id = UUID()
     let text: String
     let mine: Bool
+    /// Who said it, shown above the bubble the way iMessage does in a group.
+    /// Nil on your own and on Amber's.
+    var who: String? = nil
     /// Said just now, so it types itself out instead of appearing whole.
     var fresh = false
 }
@@ -70,6 +73,8 @@ final class ChatStore: ObservableObject {
     @Published var error: String?
     @Published var building: BuildState?
     @Published var route: Route = .home { didSet { saveLocal() } }
+    /// The row an app is opening from, so its screen grows out of that row.
+    var revealFrom: CGRect = .zero
     @Published var loading = false
     @Published var expanded = false
     /// The conversation with each tool, kept here so it survives the building
@@ -119,7 +124,7 @@ final class ChatStore: ObservableObject {
 
     /// Amber's side of the conversation: shown, and said out loud.
     private func reply(_ slug: String, _ text: String) {
-        withAnimation(.spring(response: 0.4, dampingFraction: 0.88)) {
+        withAnimation(.reveal) {
             talk[slug, default: []].append(Turn(text: text, mine: false, fresh: true))
         }
         if let token = session?.token { Task { await speaker.say(text, token: token) } }
@@ -284,7 +289,9 @@ final class ChatStore: ObservableObject {
               let rows = try? JSONDecoder().decode(Rows.self, from: data) else { return }
         let fromServer: [Turn] = rows.turns.compactMap { row in
             switch row.role {
-            case "person": return Turn(text: row.name == nil || row.name == session.name ? row.text : "\(row.name!): \(row.text)", mine: true)
+            case "person":
+                if let name = row.name, name != session.name { return Turn(text: row.text, mine: false, who: name) }
+                return Turn(text: row.text, mine: true)
             case "amber": return Turn(text: row.text, mine: false)
             default: return nil
             }
@@ -302,7 +309,7 @@ final class ChatStore: ObservableObject {
         let words = text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !words.isEmpty else { return }
         error = nil
-        withAnimation(.spring(response: 0.4, dampingFraction: 0.88)) {
+        withAnimation(.reveal) {
             talk[slug, default: []].append(Turn(text: words, mine: true))
         }
         do {
@@ -400,7 +407,7 @@ final class ChatStore: ObservableObject {
                 "api/chats/\(session.chat)/adopt", method: "POST",
                 body: ["slug": result.slug, "since": ISO8601DateFormatter().string(from: since.addingTimeInterval(-2))],
                 chat: session.token)
-            withAnimation(.spring(response: 0.45, dampingFraction: 0.86)) {
+            withAnimation(.reveal) {
                 talk[result.slug] = (talk[draftKey] ?? []) + (talk[result.slug] ?? [])
                 talk[draftKey] = nil
                 drafts.removeAll { $0.id == draftKey }
@@ -418,7 +425,7 @@ final class ChatStore: ObservableObject {
     @discardableResult
     func newDraft(title: String) -> DraftApp {
         let draft = DraftApp(id: "new-\(UUID().uuidString.prefix(8))", started: Date(), title: title)
-        withAnimation(.spring(response: 0.45, dampingFraction: 0.86)) { drafts.insert(draft, at: 0) }
+        withAnimation(.reveal) { drafts.insert(draft, at: 0) }
         return draft
     }
 
@@ -434,7 +441,8 @@ final class ChatStore: ObservableObject {
             options: [.regularExpression, .caseInsensitive]) != nil
         if aboutNewApp {
             let draft = newDraft(title: "New app")
-            withAnimation(.spring(response: 0.45, dampingFraction: 0.86)) { route = .draft(draft.id) }
+            revealFrom = .zero
+            withAnimation(.reveal) { route = .draft(draft.id) }
             await say(draft.id, words)
             return
         }

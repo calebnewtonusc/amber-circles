@@ -10,7 +10,7 @@ settings:
     CODE_SIGN_STYLE: Automatic
     SWIFT_VERSION: "5.0"
     MARKETING_VERSION: "2.0"
-    CURRENT_PROJECT_VERSION: "45"
+    CURRENT_PROJECT_VERSION: "46"
     TARGETED_DEVICE_FAMILY: "1"
 targets:
   Amber:
@@ -68,8 +68,13 @@ targets:
         NSExtension:
           NSExtensionPointIdentifier: com.apple.message-payload-provider
           NSExtensionPrincipalClass: $(PRODUCT_MODULE_NAME).MessagesViewController
+    # xcodegen rewrites this file from `properties` on every generate. Listed
+    # only as a path, it wrote an empty dict and builds 44 and 45 shipped
+    # without Sign in with Apple, so Apple refused on Caleb's phone 2026-09-27.
     entitlements:
       path: Messages/Messages.entitlements
+      properties:
+        com.apple.developer.applesignin: [Default]
     settings:
       base:
         CODE_SIGN_ENTITLEMENTS: Messages/Messages.entitlements

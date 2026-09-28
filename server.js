@@ -1397,7 +1397,7 @@ app.get("/api/chats/:id", async (c) => {
       `select t.slug, t.title, t.description, t.version, t.made_by, t.updated_at,
               (t.draft_html is not null) as has_draft, t.draft_request,
               (select count(*) from records r where r.tool_id = t.id)::int as entries,
-              (select count(*) from tool_notes n where n.tool_id = t.id)::int as notes
+              (select count(*) from tool_notes n where n.tool_id = t.id and n.parent_id is null and n.resolved_at is null)::int as notes
          from tools t where t.circle_id = $1 order by t.updated_at desc`,
       [circleId],
     ),
@@ -1414,7 +1414,7 @@ function chatData(circleId, owner) {
         await pool.query(
           `select t.slug, t.title, t.made_by, t.version, (t.draft_html is not null) as has_draft,
                   (select count(*) from records r where r.tool_id = t.id)::int as entries,
-                  (select count(*) from tool_notes n where n.tool_id = t.id)::int as notes
+                  (select count(*) from tool_notes n where n.tool_id = t.id and n.parent_id is null and n.resolved_at is null)::int as notes
              from tools t where t.circle_id = $1 order by t.updated_at desc`,
           [circleId],
         )
@@ -1456,7 +1456,7 @@ function chatData(circleId, owner) {
       if (!tool) return { error: `No tool ${slug} in this chat.` };
       const [{ rows: versions }, { rows: notes }] = await Promise.all([
         pool.query("select version, request, created_at from tool_versions where tool_id = $1 order by version", [tool.id]),
-        pool.query("select n.text, m.name from tool_notes n left join members m on m.id = n.member_id where n.tool_id = $1 order by n.created_at", [tool.id]),
+        pool.query("select n.text, m.name from tool_notes n left join members m on m.id = n.member_id where n.tool_id = $1 and n.resolved_at is null order by n.created_at", [tool.id]),
       ]);
       return { title: tool.title, live_version: tool.version, waiting_change: tool.draft_request, versions, comments: notes, code: tool.html.slice(0, 40000) };
     },
@@ -1612,7 +1612,7 @@ app.get("/api/chats/:id/board", async (c) => {
     pool.query(
       `select n.id, n.text, n.created_at, m.name, t.slug, t.title from tool_notes n
          join tools t on t.id = n.tool_id left join members m on m.id = n.member_id
-        where t.circle_id = $1 order by n.created_at desc limit 30`,
+        where t.circle_id = $1 and n.parent_id is null and n.resolved_at is null order by n.created_at desc limit 30`,
       [circleId],
     ),
     pool.query(
@@ -1737,11 +1737,24 @@ app.get("/api/tools/:slug/notes", async (c) => {
   const owner = await requireOwner(c);
   const tool = await ownedTool(owner, c.req.param("slug"));
   const { rows } = await pool.query(
-    `select n.id, n.text, n.created_at, m.name from tool_notes n
+    `select n.id, n.text, n.created_at, m.name, n.parent_id, n.resolved_at from tool_notes n
        left join members m on m.id = n.member_id where n.tool_id = $1 order by n.created_at`,
     [tool.id],
   );
   return c.json({ notes: rows });
+});
+
+// Resolve or reopen a comment. Resolving closes the thread, replies and all.
+app.post("/api/tools/:slug/notes/:id/resolve", async (c) => {
+  const owner = await requireOwner(c);
+  const tool = await ownedTool(owner, c.req.param("slug"));
+  const body = await c.req.json().catch(() => ({}));
+  const { rowCount } = await pool.query(
+    "update tool_notes set resolved_at = case when $3 then now() else null end where id = $1 and tool_id = $2 and parent_id is null",
+    [c.req.param("id"), tool.id, body.resolved !== false],
+  );
+  if (!rowCount) throw new HttpError(404, "That comment is gone.");
+  return c.json({ ok: true });
 });
 
 app.post("/api/tools/:slug/notes", async (c) => {
@@ -1749,9 +1762,16 @@ app.post("/api/tools/:slug/notes", async (c) => {
   const tool = await ownedTool(owner, c.req.param("slug"));
   const body = await c.req.json().catch(() => ({}));
   const id = newId("note");
+  // A reply must hang off a comment on this same app, and only one level deep.
+  let parent = null;
+  if (body.parent) {
+    const { rows } = await pool.query("select id from tool_notes where id = $1 and tool_id = $2 and parent_id is null", [String(body.parent), tool.id]);
+    if (!rows.length) throw new HttpError(404, "That comment is gone.");
+    parent = rows[0].id;
+  }
   await pool.query(
-    "insert into tool_notes (id, tool_id, member_id, text) values ($1, $2, $3, $4)",
-    [id, tool.id, owner.chatMember?.id || null, requireText(body.text, "note", 1000)],
+    "insert into tool_notes (id, tool_id, member_id, text, parent_id) values ($1, $2, $3, $4, $5)",
+    [id, tool.id, owner.chatMember?.id || null, requireText(body.text, "note", 1000), parent],
   );
   return c.json({ id });
 });
@@ -1764,7 +1784,7 @@ app.post("/api/tools/:slug/talk", async (c) => {
   const body = await c.req.json().catch(() => ({}));
   const text = requireText(body.text, "what you said", 2000);
   const { rows: notes } = await pool.query(
-    "select text from tool_notes where tool_id = $1 order by created_at desc limit 10",
+    "select text from tool_notes where tool_id = $1 and resolved_at is null order by created_at desc limit 10",
     [tool.id],
   );
   const { rows: memory } = await pool.query(

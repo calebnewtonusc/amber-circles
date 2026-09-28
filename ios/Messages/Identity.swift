@@ -34,10 +34,8 @@ struct SignInView: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 18) {
-            Brand()
+            Image("AmberLogo").resizable().scaledToFit().frame(width: 52, height: 60).accessibilityHidden(true)
             Text("Let's build together").font(Amber.font(30, .heavy)).headline().foregroundStyle(Amber.ink)
-            Text("Sign in once so Amber knows it's you in every chat, and remembers how you like things.")
-                .font(Amber.font(18)).foregroundStyle(Amber.body)
             SignInWithAppleButton(.signIn) { request in
                 request.requestedScopes = [.fullName]
             } onCompletion: { result in

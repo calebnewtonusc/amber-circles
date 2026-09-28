@@ -152,6 +152,10 @@ create table if not exists tool_notes (
   created_at  timestamptz not null default now()
 );
 create index if not exists tool_notes_tool_idx on tool_notes(tool_id, created_at);
+-- Comments work like Google Docs (Caleb, 2026-09-27): a reply hangs off one
+-- comment, and resolving a comment closes its whole thread.
+alter table tool_notes add column if not exists parent_id text references tool_notes(id) on delete cascade;
+alter table tool_notes add column if not exists resolved_at timestamptz;
 
 -- The conversation with each tool, kept. Chewbacca's voice is "connected to
 -- the brain both ways" (docs/VOICE-DESIGN.md): every turn is logged and read

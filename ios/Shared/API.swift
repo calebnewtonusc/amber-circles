@@ -119,6 +119,9 @@ struct Note: Codable, Identifiable, Hashable {
     let text: String
     let created_at: String
     let name: String?
+    /// Set on a reply: the comment it answers.
+    var parent_id: String? = nil
+    var resolved_at: String? = nil
 }
 
 struct Version: Codable, Identifiable, Hashable {

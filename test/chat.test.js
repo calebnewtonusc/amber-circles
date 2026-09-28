@@ -66,6 +66,31 @@ test("anyone in the chat can make, change and comment on a tool; outsiders canno
   assert.equal(view.status, 403, "another chat cannot list this one");
 });
 
+test("comments work like Google Docs: reply to one, resolve the thread", async () => {
+  const { stan, ruth } = await startChat();
+  const slug = (await call("/api/tools", { method: "POST", chat: ruth.token, body: { title: "Rides", circle: stan.chat, html: page("v1") } })).json.slug;
+  const first = (await call(`/api/tools/${slug}/notes`, { method: "POST", chat: ruth.token, body: { text: "Add Sunday" } })).json.id;
+  const reply = await call(`/api/tools/${slug}/notes`, { method: "POST", chat: stan.token, body: { text: "On it", parent: first } });
+  assert.equal(reply.status, 200);
+  const deep = await call(`/api/tools/${slug}/notes`, { method: "POST", chat: stan.token, body: { text: "nested", parent: reply.json.id } });
+  assert.equal(deep.status, 404, "replies are one level deep");
+  let notes = (await call(`/api/tools/${slug}/notes`, { chat: ruth.token })).json.notes;
+  assert.deepEqual(notes.map((n) => [n.name, n.text, n.parent_id]), [["Ruth", "Add Sunday", null], ["Stan", "On it", first]]);
+  let board = (await call(`/api/chats/${stan.chat}/board`, { chat: stan.token })).json;
+  assert.deepEqual(board.comments.map((n) => n.text), ["Add Sunday"], "replies stay in their thread");
+  assert.equal((await call(`/api/tools/${slug}/notes/${reply.json.id}/resolve`, { method: "POST", chat: stan.token, body: {} })).status, 404, "only a thread resolves");
+  assert.equal((await call(`/api/tools/${slug}/notes/${first}/resolve`, { method: "POST", chat: stan.token, body: {} })).status, 200);
+  notes = (await call(`/api/tools/${slug}/notes`, { chat: ruth.token })).json.notes;
+  assert.ok(notes[0].resolved_at, "resolved is kept, not deleted");
+  board = (await call(`/api/chats/${stan.chat}/board`, { chat: stan.token })).json;
+  assert.deepEqual(board.comments, [], "a resolved comment leaves the home board");
+  await call(`/api/tools/${slug}/notes/${first}/resolve`, { method: "POST", chat: ruth.token, body: { resolved: false } });
+  notes = (await call(`/api/tools/${slug}/notes`, { chat: ruth.token })).json.notes;
+  assert.equal(notes[0].resolved_at, null, "and it can be reopened");
+  const other = await startChat();
+  assert.equal((await call(`/api/tools/${slug}/notes/${first}/resolve`, { method: "POST", chat: other.ruth.token, body: {} })).status, 404);
+});
+
 test("someone in a chat cannot delete the chat's account or remove people; the starter can remove the chat", async () => {
   const { stan, ruth } = await startChat();
   assert.equal((await call("/api/owner", { method: "DELETE", chat: ruth.token })).status, 403);
