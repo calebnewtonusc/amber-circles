@@ -216,3 +216,13 @@ create table if not exists chat_plans (
   request    text not null,
   at         timestamptz not null default now()
 );
+
+-- When each person last looked at each tool, so opening it can say what
+-- happened since (Caleb: "when you open the app sent by someone else the
+-- agent should update you on what's happened").
+create table if not exists tool_seen (
+  member_id  text not null references members(id) on delete cascade,
+  tool_id    text not null references tools(id) on delete cascade,
+  at         timestamptz not null default now(),
+  primary key (member_id, tool_id)
+);

@@ -45,6 +45,8 @@ Behaviour
 - Call amber.onChange to redraw when someone else changes data.
 - Deleting asks for confirmation first. People can only remove entries they added themselves (compare author.id with amber.me().id); the owner can remove any. Only show a Remove button where it will work.
 
+Order of the file: write the <style> first, then the complete visible structure of every screen directly in the <body> (headers, cards, forms, buttons, empty states), and only then the <script> at the very end that fills in data. People watch the page appear as you write it, so the visible parts must come first and must look finished before any script runs.
+
 Look: make it feel like a polished app, not a form. The bar is something a person shows their friends.
 - Type: "Geist" from Google Fonts, weights 400, 500 and 600 only. A real header: the app name large (30 to 36px, weight 600, letter-spacing -0.02em) with one short line under it in #666666.
 - Color: page #fafafa, cards #ffffff. Pick ONE accent that fits the vibe they asked for and the group (warm amber #f59e0b for friendly, calm blue #2563eb for simple, green #16a34a for church or outdoors, violet #7c3aed for fun) and use it only for the main button, selected states and small highlights. Everything else is ink #171717 and greys.
@@ -299,4 +301,23 @@ export async function patch({ request, currentHtml, circleName }) {
     html = html.replace(edit.find, () => edit.replace);
   }
   return { html, edits: parsed.edits.length, usage: message.usage };
+}
+
+// What someone needs to hear when they open an app: who made it and what it
+// is for, the first time; after that, only what changed since they last
+// looked. Two sentences, spoken.
+export async function catchUp({ me, title, madeBy, description, since }) {
+  const message = await anthropic().messages.create({
+    model: "claude-haiku-4-5",
+    max_tokens: 200,
+    system:
+      "You are Amber, catching someone up as they open an app their group chat made. Two short spoken sentences at most, plain words, no emojis, no em dashes. First visit to someone else's app: say who made it and what it is for, like \"Shirley made this to keep track of who's coming to meetings.\" Returning: say only what changed since they last looked, by name. If nothing changed, reply with an empty string.",
+    messages: [
+      {
+        role: "user",
+        content: `Listener: ${me}\nApp: ${title}, made by ${madeBy || "someone"}\nWhat it is for: ${description}\n${since === null ? "First time they open it." : `Since they last looked:\n${since || "(nothing)"}`}`,
+      },
+    ],
+  });
+  return message.content.filter((b) => b.type === "text").map((b) => b.text).join("").trim().replace(/^""$/, "");
 }

@@ -14,7 +14,7 @@ import { serve } from "@hono/node-server";
 import { serveStatic } from "@hono/node-server/serve-static";
 import pg from "pg";
 import { streamSSE } from "hono/streaming";
-import { build, describeChange, explain, patch, talk, titleFrom } from "./builder.js";
+import { build, catchUp, describeChange, explain, patch, talk, titleFrom } from "./builder.js";
 import { converse, extractMemories } from "./agent.js";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
@@ -1009,6 +1009,8 @@ const BUILDS_PER_HOUR = 12;
 // price (2026-09-27, two builds), so 150 a day caps the worst day near $30.
 const BUILDS_PER_DAY = Number(process.env.AMBER_BUILDS_PER_DAY || 150);
 const buildLog = new Map();
+// Who in each chat is building what right now, for "Shirley is making...".
+const buildingNow = new Map();
 let siteBuilds = [];
 function allowBuild(ownerId) {
   const now = Date.now();
@@ -1061,6 +1063,9 @@ app.post("/api/build", async (c) => {
       "That is a lot of building for one hour. Take a break and try again in a little while.",
     );
 
+  const presenceKey = `${circle.id}:${Date.now()}:${Math.random()}`;
+  if (owner.chatMember)
+    buildingNow.set(presenceKey, { circle: circle.id, who: owner.chatMember.name, what: existing ? `changing ${existing.title}` : request.slice(0, 80) });
   return streamSSE(c, async (sse) => {
     const send = (event, data) =>
       sse.writeSSE({ event, data: JSON.stringify(data) });
@@ -1119,6 +1124,8 @@ app.post("/api/build", async (c) => {
           ? error.message
           : "Something went wrong while building. Try again.",
       });
+    } finally {
+      buildingNow.delete(presenceKey);
     }
   });
 });
@@ -1543,6 +1550,83 @@ app.post("/api/chats/:id/agent", async (c) => {
     ]);
   }
   return c.json(result);
+});
+
+// The Drive view under the apps: open comments on every app, and the ideas
+// the chat's memory holds as wishes (Caleb: "below the apps already made you
+// can see current comments/todos/ideas"). Plus who is building what now.
+app.get("/api/chats/:id/board", async (c) => {
+  const owner = await requireOwner(c);
+  if (owner.chatMember?.circleId !== c.req.param("id")) throw new HttpError(403, "You are not in this chat.");
+  const circleId = owner.chatMember.circleId;
+  const [{ rows: comments }, { rows: ideas }] = await Promise.all([
+    pool.query(
+      `select n.id, n.text, n.created_at, m.name, t.slug, t.title from tool_notes n
+         join tools t on t.id = n.tool_id left join members m on m.id = n.member_id
+        where t.circle_id = $1 order by n.created_at desc limit 30`,
+      [circleId],
+    ),
+    pool.query(
+      "select name, description, about, updated_at from chat_memories where circle_id = $1 and modality = 'wish' order by updated_at desc limit 20",
+      [circleId],
+    ),
+  ]);
+  const building = [...buildingNow.values()].filter((b) => b.circle === circleId).map(({ who, what }) => ({ who, what }));
+  return c.json({ comments, ideas, building });
+});
+
+// A new app is talked through before it exists. When it lands, the talk
+// that shaped it moves into it, so its conversation lives in the app.
+app.post("/api/chats/:id/adopt", async (c) => {
+  const owner = await requireOwner(c);
+  if (owner.chatMember?.circleId !== c.req.param("id")) throw new HttpError(403, "You are not in this chat.");
+  const body = await c.req.json().catch(() => ({}));
+  const since = new Date(String(body.since || ""));
+  if (Number.isNaN(since.getTime())) throw new HttpError(400, "since must be a date");
+  const { rowCount } = await pool.query(
+    `update chat_turns set tool_slug = $3 where circle_id = $1 and tool_slug is null and created_at >= $2
+       and (member_id = $4 or member_id is null)`,
+    [owner.chatMember.circleId, since.toISOString(), String(body.slug || ""), owner.chatMember.id],
+  );
+  return c.json({ moved: rowCount });
+});
+
+// Opening an app: who made it the first time, what changed after that.
+app.post("/api/chats/:id/catchup", async (c) => {
+  const owner = await requireOwner(c);
+  if (owner.chatMember?.circleId !== c.req.param("id")) throw new HttpError(403, "You are not in this chat.");
+  const body = await c.req.json().catch(() => ({}));
+  const me = owner.chatMember;
+  const {
+    rows: [tool],
+  } = await pool.query("select id, slug, title, made_by, description from tools where circle_id = $1 and slug = $2", [me.circleId, String(body.slug || "")]);
+  if (!tool) throw new HttpError(404, "That app is not in this chat.");
+  const {
+    rows: [seen],
+  } = await pool.query("select at from tool_seen where member_id = $1 and tool_id = $2", [me.id, tool.id]);
+  await pool.query(
+    "insert into tool_seen (member_id, tool_id) values ($1, $2) on conflict (member_id, tool_id) do update set at = now()",
+    [me.id, tool.id],
+  );
+  const mine = tool.made_by === me.name;
+  if (!seen && mine) return c.json({ text: "" });
+  let since = null;
+  if (seen) {
+    const { rows } = await pool.query(
+      `select * from (
+         select t.created_at as at, coalesce(m.name, 'Amber') || ': ' || t.text as line from chat_turns t left join members m on m.id = t.member_id
+          where t.circle_id = $1 and t.tool_slug = $2 and t.created_at > $3 and (t.member_id is distinct from $4) and t.role in ('person','event')
+         union all
+         select n.created_at, coalesce(m.name, 'Someone') || ' commented: ' || n.text from tool_notes n left join members m on m.id = n.member_id
+          where n.tool_id = $5 and n.created_at > $3 and (n.member_id is distinct from $4)
+       ) recent order by at limit 20`,
+      [me.circleId, tool.slug, seen.at, me.id, tool.id],
+    );
+    if (!rows.length) return c.json({ text: "" });
+    since = rows.map((r) => r.line).join("\n");
+  }
+  const text = await catchUp({ me: me.name, title: tool.title, madeBy: tool.made_by, description: tool.description, since });
+  return c.json({ text });
 });
 
 // The chat's conversation with Amber, optionally only about one tool.
