@@ -617,14 +617,35 @@ struct ToolView: View {
                     VStack(spacing: 0) {
                         LivePanel(slug: slug, expanded: $previewing, pinsJSON: pinsJSON, onPin: handlePin)
                         ActivityTray(slug: slug, notes: notes, activity: activity) { await load() }
-                            .padding(.horizontal, 12)
+                            // Starts where the preview's flat bottom edge does:
+                            // its corner radius, 30 as a pill and 20 open.
+                            .padding(.horizontal, previewing ? 20 : 30)
+                            .animation(.reveal, value: previewing)
                             .zIndex(-1)
                     }
                     .transition(.blurReplace)
-                    if store.unpublished.contains(slug) {
-                        Button("Publish to the chat") { store.publish(slug) }
-                            .buttonStyle(BlockButton(primary: true, full: true))
-                            .transition(.opacity)
+                    // Two different acts, side by side (Caleb, 2026-09-27): the
+                    // chat gets a bubble, or the site gets the change.
+                    if let tool = store.tool(slug), store.unpublished.contains(slug) || tool.has_draft {
+                        HStack(spacing: 10) {
+                            Button { store.shareToChat(slug) } label: {
+                                Label("Send to chat", systemImage: "bubble.left.fill")
+                            }
+                            .buttonStyle(BlockButton(full: true))
+                            if tool.has_draft {
+                                Button { Task { await store.keep(slug); await load() } } label: {
+                                    Label("Publish online", systemImage: "globe")
+                                }
+                                .buttonStyle(BlockButton(primary: true, full: true))
+                                .disabled(store.changing[slug] != nil)
+                            } else {
+                                Label("Live online", systemImage: "globe")
+                                    .font(Amber.font(17, .bold)).foregroundStyle(Amber.muted)
+                                    .frame(maxWidth: .infinity, minHeight: 50)
+                                    .background(Capsule().fill(Amber.wash))
+                            }
+                        }
+                        .transition(.blurReplace)
                     }
                 }
             }
@@ -705,13 +726,9 @@ struct ToolView: View {
                 }
             }
             if tool.has_draft, store.changing[slug] == nil {
-                Bubble(text: "Publish it so the chat gets it, or put it back.", mine: false) {
-                    HStack(spacing: 10) {
-                        Button("Publish changes") { store.publishChanges(slug) }
-                            .buttonStyle(BlockButton(primary: true, full: true))
-                        Button("Put it back") { Task { await store.discard(slug); await load() } }
-                            .buttonStyle(BlockButton(full: true))
-                    }
+                Bubble(text: "Only you can see this change. Publish it online when it's right, or put it back.", mine: false) {
+                    Button("Put it back") { Task { await store.discard(slug); await load() } }
+                        .buttonStyle(BlockButton(full: true))
                 }
             }
             if versions.count > 1 {
@@ -1355,11 +1372,18 @@ struct FirstRunHeader: View {
         TallAware { tall in
             VStack(alignment: .leading, spacing: tall ? 28 : 18) {
                 if tall { Color.clear.frame(height: Onboarding.headerTop) }
+                // Egg and words centred as one block, as wide as "Let's build
+                // together". The name question wraps inside the same width,
+                // so the egg holds still between the two steps.
                 HStack(alignment: .center, spacing: 14) {
                     EggSlot(rank: 1).frame(width: 44, height: 50)
-                    HeadlineSlot(rank: 1, text: title, size: 30, wraps: true)
-                        .frame(maxWidth: .infinity)
+                    Text("Let's build together").font(Amber.font(30, .heavy)).headline()
+                        .fixedSize()
+                        .hidden()
+                        .frame(height: Onboarding.headerHeight)
+                        .overlay(HeadlineSlot(rank: 1, text: title, size: 30, wraps: true))
                 }
+                .frame(maxWidth: .infinity)
                 .frame(height: Onboarding.headerHeight)
                 Spacer()
             }

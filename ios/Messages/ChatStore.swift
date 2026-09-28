@@ -404,6 +404,13 @@ final class ChatStore: ObservableObject {
             try? await Task.sleep(for: .seconds(2))
             if !answered, let self { self.reply(slug, "Let me look at \(subject).") }
         }
+        // The filler only covers the wait: its bubble goes when the real
+        // answer comes, so it never sits above it (Caleb, 2026-09-27).
+        let fillerText = "Let me look at \(subject)."
+        func dropFiller() {
+            filler.cancel()
+            withAnimation(.messageIn) { talk[slug]?.removeAll { !$0.mine && $0.text == fillerText } }
+        }
         do {
             struct Action: Decodable { let type: String; let slug: String?; let request: String? }
             struct Reply: Decodable { let reply: String; let actions: [Action] }
@@ -413,6 +420,7 @@ final class ChatStore: ObservableObject {
                 "api/chats/\(session.chat)/agent", method: "POST", body: body, chat: session.token,
                 person: (personKey ?? "").isEmpty ? nil : personKey)
             answered = true
+            dropFiller()
             filler.cancel()
             self.reply(slug, result.reply)
             for action in result.actions {
@@ -433,6 +441,7 @@ final class ChatStore: ObservableObject {
             }
         } catch {
             answered = true
+            dropFiller()
             filler.cancel()
             self.error = error.localizedDescription
         }
@@ -610,6 +619,14 @@ final class ChatStore: ObservableObject {
 
     /// Puts a bubble for the waiting change in the message box; the change
     /// goes live for everyone when the bubble is sent.
+    /// A bubble for the app in the conversation, nothing more: publishing a
+    /// waiting change online is its own button.
+    func shareToChat(_ slug: String) {
+        guard let made = tool(slug) else { return }
+        pendingSend[slug] = false
+        send(made, note: unpublished.contains(slug) ? "I made this for us. Tap to open it." : "Take a look at this. Tap to open it.")
+    }
+
     func publishChanges(_ slug: String) {
         guard let changed = tool(slug) else { return }
         pendingSend[slug] = true
