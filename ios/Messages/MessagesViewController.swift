@@ -8,6 +8,9 @@ final class MessagesViewController: MSMessagesAppViewController {
     override func viewDidLoad() {
         super.viewDidLoad()
         view.backgroundColor = UIColor(Amber.paper)
+        // Light always: in dark mode the text fields drew white text on the
+        // white boxes (Caleb's phone, build 41).
+        overrideUserInterfaceStyle = .light
         store.host = self
         let hosting = UIHostingController(rootView: RootView().environmentObject(store))
         hosting.view.backgroundColor = .clear
@@ -42,6 +45,17 @@ final class MessagesViewController: MSMessagesAppViewController {
     /// containing app instead (Caleb's phone, build 39). So the link goes to
     /// the Amber app, which passes it straight on to Safari.
     func openInRealSafari(_ url: URL) {
+        // Straight to Safari when the system lets an extension reach the
+        // application object; the bounce through the Amber app below is only
+        // the fallback (Caleb: "it should just go straight to safari").
+        var responder: UIResponder? = self
+        while let next = responder {
+            if let application = next as? UIApplication {
+                application.open(url, options: [:], completionHandler: nil)
+                return
+            }
+            responder = next.next
+        }
         var bridge = URLComponents()
         bridge.scheme = "amberapp"
         bridge.host = "open"

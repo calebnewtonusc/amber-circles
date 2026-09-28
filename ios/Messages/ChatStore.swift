@@ -4,6 +4,32 @@ import SwiftUI
 enum Route: Hashable {
     case home
     case tool(String)
+    /// A new app being talked through, before it exists. Its key starts
+    /// with "new-"; when the build lands it becomes .tool(slug).
+    case draft(String)
+}
+
+/// A new app the chat is talking about but has not built yet.
+struct DraftApp: Codable, Identifiable, Equatable {
+    let id: String
+    var started: Date
+    var title: String
+}
+
+struct BoardItem: Decodable, Identifiable {
+    var id: String { (slug ?? "") + text }
+    let text: String
+    let name: String?
+    let slug: String?
+    let title: String?
+}
+
+struct Board: Decodable {
+    struct Idea: Decodable, Identifiable { var id: String { name }; let name: String; let description: String; let about: String? }
+    struct Building: Decodable, Identifiable { var id: String { who + what }; let who: String; let what: String }
+    let comments: [BoardItem]
+    let ideas: [Idea]
+    let building: [Building]
 }
 
 /// One line of the conversation with a tool: what someone said, or what
@@ -12,6 +38,8 @@ struct Turn: Identifiable, Equatable, Codable {
     var id = UUID()
     let text: String
     let mine: Bool
+    /// Said just now, so it types itself out instead of appearing whole.
+    var fresh = false
 }
 
 /// What is on this phone and not yet in the cloud: the conversation, apps not
@@ -21,6 +49,8 @@ struct LocalState: Codable {
     var talk: [String: [Turn]] = [:]
     var unpublished: Set<String> = []
     var slug: String?
+    var drafts: [DraftApp]? = []
+    var draftKey: String?
 }
 
 struct BuildState: Equatable {
@@ -53,11 +83,32 @@ final class ChatStore: ObservableObject {
     /// The half-written page and what is being added right now, per tool
     /// ("__new" for an app being made), for the live preview.
     @Published var liveHTML: [String: String] = [:]
+    /// What the person is saying right now, while they hold the talk bar.
+    @Published var liveSpeech: String?
+    /// New apps being talked through on this phone, shown as boxes in the list.
+    @Published var drafts: [DraftApp] = [] { didSet { saveLocal() } }
+    /// The last thing Amber said on the home screen, shown for a moment above
+    /// the talk bar instead of piling up as a conversation.
+    @Published var caption: String?
+    @Published var board: Board?
     @Published var doing: [String: String] = [:]
     /// Tools built but not yet shared. Nothing goes into the message box
     /// until the person taps Publish (Caleb, 2026-09-27: "the text already
     /// tries to send without me clicking publish").
     @Published var unpublished: Set<String> = [] { didSet { saveLocal() } }
+
+    /// Amber says what it is building as it goes, like a person narrating
+    /// their work, but never more than once every few seconds and never over
+    /// itself (Caleb: "it should literally feel like iron man genui").
+    private var lastNarration = Date.distantPast
+    private var lastNarrated = ""
+    func narrate(_ doing: String) {
+        guard doing != lastNarrated, Date().timeIntervalSince(lastNarration) > 5,
+              !speaker.isSpeaking, let token = session?.token else { return }
+        lastNarration = Date()
+        lastNarrated = doing
+        Task { await speaker.say(doing + ".", token: token) }
+    }
 
     /// Amber opens a tool by saying what it is, out loud, once.
     func greet(_ slug: String, _ text: String) { reply(slug, text) }
@@ -65,7 +116,7 @@ final class ChatStore: ObservableObject {
     /// Amber's side of the conversation: shown, and said out loud.
     private func reply(_ slug: String, _ text: String) {
         withAnimation(.spring(response: 0.4, dampingFraction: 0.88)) {
-            talk[slug, default: []].append(Turn(text: text, mine: false))
+            talk[slug, default: []].append(Turn(text: text, mine: false, fresh: true))
         }
         if let token = session?.token { Task { await speaker.say(text, token: token) } }
     }
@@ -81,8 +132,10 @@ final class ChatStore: ObservableObject {
     private func saveLocal() {
         guard !restoring, !participant.isEmpty else { return }
         var slug: String?
+        var draftKey: String?
         if case .tool(let current) = route { slug = current }
-        let state = LocalState(talk: talk, unpublished: unpublished, slug: slug)
+        if case .draft(let key) = route { draftKey = key }
+        let state = LocalState(talk: talk, unpublished: unpublished, slug: slug, drafts: drafts, draftKey: draftKey)
         if let data = try? JSONEncoder().encode(state) { UserDefaults.standard.set(data, forKey: localKey) }
     }
 
@@ -91,12 +144,13 @@ final class ChatStore: ObservableObject {
         defer { restoring = false }
         guard let data = UserDefaults.standard.data(forKey: localKey),
               let state = try? JSONDecoder().decode(LocalState.self, from: data) else {
-            talk = [:]; unpublished = []; route = .home
+            talk = [:]; unpublished = []; drafts = []; route = .home
             return
         }
         talk = state.talk
         unpublished = state.unpublished
-        route = state.slug.map { .tool($0) } ?? .home
+        drafts = state.drafts ?? []
+        route = state.slug.map { .tool($0) } ?? state.draftKey.map { .draft($0) } ?? .home
     }
 
     func attach(_ conversation: MSConversation) {
@@ -215,7 +269,7 @@ final class ChatStore: ObservableObject {
     /// Loads the chat's conversation with Amber, all of it on the home screen
     /// ("" key) or only what was said about one tool.
     func loadTalk(_ slug: String) async {
-        guard let session else { return }
+        guard let session, !slug.hasPrefix("new-") else { return }
         struct Row: Decodable { let role: String; let text: String; let name: String? }
         struct Rows: Decodable { let turns: [Row] }
         let path = slug.isEmpty ? "api/chats/\(session.chat)/agent" : "api/chats/\(session.chat)/agent?slug=\(slug)"
@@ -285,7 +339,7 @@ final class ChatStore: ObservableObject {
             struct Action: Decodable { let type: String; let slug: String?; let request: String? }
             struct Reply: Decodable { let reply: String; let actions: [Action] }
             var body: [String: Any] = ["text": words]
-            if !slug.isEmpty { body["slug"] = slug }
+            if !slug.isEmpty, !slug.hasPrefix("new-") { body["slug"] = slug }
             let result: Reply = try await API.call(
                 "api/chats/\(session.chat)/agent", method: "POST", body: body, chat: session.token)
             answered = true
@@ -300,6 +354,9 @@ final class ChatStore: ObservableObject {
                 case "make":
                     if let request = action.request { Task { await self.makeInBackground(request, tell: slug) } }
                 case "open":
+                    // Only when they asked to see it: Safari opening by itself
+                    // mid-conversation was jarring (simulator run, 2026-09-27).
+                    guard words.range(of: #"\b(open|show|see|pull (it )?up|look at)\b"#, options: [.regularExpression, .caseInsensitive]) != nil else { break }
                     if let target = action.slug, let url = openURL(target, draft: tool(target)?.has_draft == true) { open(url) }
                 default: break
                 }
@@ -315,22 +372,82 @@ final class ChatStore: ObservableObject {
     /// Amber says so and puts the bubble in the message field to send.
     private func makeInBackground(_ request: String, tell key: String) async {
         guard let session else { return }
-        changing["__new"] = Date()
-        defer { changing["__new"] = nil }
+        // Every new app has a box from the first word; one started from the
+        // home screen gets one now.
+        let draftKey = key.hasPrefix("new-") ? key : newDraft(title: "New app").id
+        let since = drafts.first { $0.id == draftKey }?.started ?? Date()
+        if let index = drafts.firstIndex(where: { $0.id == draftKey }) {
+            drafts[index].title = String(request.prefix(40))
+        }
+        changing[draftKey] = Date()
+        defer { changing[draftKey] = nil }
         do {
             let result = try await API.build(request: request, chat: session.chat, slug: nil, token: session.token) { [weak self] _, _, html, doing in
-                if let html { self?.liveHTML["__new"] = html }
-                if let doing { self?.doing["__new"] = doing }
+                if let html { self?.liveHTML[draftKey] = html }
+                if let doing { self?.doing[draftKey] = doing; self?.narrate(doing) }
             }
-            liveHTML["__new"] = nil
-            doing["__new"] = nil
+            liveHTML[draftKey] = nil
+            doing[draftKey] = nil
             await refresh()
+            // The talk that shaped it moves into it, on the server and here.
+            struct Moved: Decodable { let moved: Int }
+            let _: Moved? = try? await API.call(
+                "api/chats/\(session.chat)/adopt", method: "POST",
+                body: ["slug": result.slug, "since": ISO8601DateFormatter().string(from: since.addingTimeInterval(-2))],
+                chat: session.token)
+            withAnimation(.spring(response: 0.45, dampingFraction: 0.86)) {
+                talk[result.slug] = (talk[draftKey] ?? []) + (talk[result.slug] ?? [])
+                talk[draftKey] = nil
+                drafts.removeAll { $0.id == draftKey }
+                unpublished.insert(result.slug)
+                if route == .draft(draftKey) { route = .tool(result.slug) }
+            }
             let title = tool(result.slug)?.title ?? "it"
-            reply(key, "\(title) is ready. Try it, then tap Publish when you want the chat to have it.")
-            unpublished.insert(result.slug)
+            reply(result.slug, "\(title) is ready. Try it, then tap Publish when you want the chat to have it.")
         } catch {
-            reply(key, "That didn't get built. \(error.localizedDescription)")
+            reply(draftKey, "That didn't get built. \(error.localizedDescription)")
         }
+    }
+
+    /// A new app box, shown in the list right away.
+    @discardableResult
+    func newDraft(title: String) -> DraftApp {
+        let draft = DraftApp(id: "new-\(UUID().uuidString.prefix(8))", started: Date(), title: title)
+        withAnimation(.spring(response: 0.45, dampingFraction: 0.86)) { drafts.insert(draft, at: 0) }
+        return draft
+    }
+
+    /// Talking on the home screen. Talk about making something opens a new
+    /// app box and moves into it; anything else is answered in a caption.
+    /// Caleb: "if I start talking abt making a new app, it should smoothly
+    /// create a new app box and we migrate to there."
+    func homeSay(_ text: String) async {
+        let words = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !words.isEmpty else { return }
+        let aboutNewApp = words.range(
+            of: #"\b(make|build|create|start|need|want|set up|let'?s do)\b.*\b(app|list|tracker|sheet|page|site|website|tool|sign.?up|calendar|schedule|poll|board|game)\b"#,
+            options: [.regularExpression, .caseInsensitive]) != nil
+        if aboutNewApp {
+            let draft = newDraft(title: "New app")
+            withAnimation(.spring(response: 0.45, dampingFraction: 0.86)) { route = .draft(draft.id) }
+            await say(draft.id, words)
+            return
+        }
+        await say("", words)
+        let answer = talk[""]?.last(where: { !$0.mine })?.text
+        withAnimation(.easeOut(duration: 0.25)) { caption = answer }
+    }
+
+    func catchUp(_ slug: String) async -> String? {
+        guard let session else { return nil }
+        struct News: Decodable { let text: String }
+        let news: News? = try? await API.call("api/chats/\(session.chat)/catchup", method: "POST", body: ["slug": slug], chat: session.token)
+        return news?.text
+    }
+
+    func loadBoard() async {
+        guard let session else { return }
+        board = try? await API.call("api/chats/\(session.chat)/board", chat: session.token)
     }
 
     /// Builds a change without taking over the screen, then says when it is
@@ -342,7 +459,7 @@ final class ChatStore: ObservableObject {
         do {
             _ = try await API.build(request: request, chat: session.chat, slug: slug, token: session.token) { [weak self] _, _, html, doing in
                 if let html { self?.liveHTML[slug] = html }
-                if let doing { self?.doing[slug] = doing }
+                if let doing { self?.doing[slug] = doing; self?.narrate(doing) }
             }
             liveHTML[slug] = nil
             doing[slug] = nil

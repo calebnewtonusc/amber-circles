@@ -13,25 +13,49 @@ struct LivePanel: View {
     @EnvironmentObject var store: ChatStore
     /// The tool being shown, or nil while a brand new one is being built.
     let slug: String?
+    /// Which build this shows: a draft's key while a new app is made.
+    var buildKey: String? = nil
     @Binding var expanded: Bool
     var height: CGFloat = 440
 
-    private var key: String { slug ?? "__new" }
+    private var key: String { buildKey ?? slug ?? "__new" }
     private var building: Bool { store.changing[key] != nil }
     private var liveHTML: String? { store.liveHTML[key] }
 
     var body: some View {
-        VStack(spacing: 0) {
-            header
+        ZStack(alignment: .top) {
             // Always loaded, hidden by the button's own shape until it grows
             // (Caleb: "the back layer should already be loaded but hidden"),
             // so opening is a reveal, never a wait.
             WebFrame(url: building ? nil : slug.flatMap { store.openURL($0, draft: store.tool($0)?.has_draft == true) },
                      html: building ? liveHTML : nil)
                 .id(slug.map { "\($0)-\(store.tool($0)?.version ?? 0)-\(store.tool($0)?.has_draft == true)" } ?? "new")
-                .frame(height: height - 60)
+                .frame(height: height)
                 .opacity(expanded ? 1 : 0.001)
                 .allowsHitTesting(expanded)
+            // Collapsed it is a button that says what is happening; opened,
+            // the header gets out of the way and only a small X is left in the
+            // corner (Caleb: "there should just be the little X in the corner").
+            if expanded {
+                HStack(spacing: 8) {
+                    if building {
+                        Text(status).font(Amber.font(13, .bold)).foregroundStyle(.white)
+                            .padding(.horizontal, 10).frame(height: 30)
+                            .background(Capsule().fill(Amber.amber))
+                            .transition(.opacity)
+                    }
+                    Spacer()
+                    if let slug, !building {
+                        cornerButton("safari", label: "Open in Safari") {
+                            if let url = store.openURL(slug, draft: store.tool(slug)?.has_draft == true) { store.host?.openInRealSafari(url) }
+                        }
+                    }
+                    cornerButton("xmark", label: "Close preview") { close() }
+                }
+                .padding(10)
+            } else {
+                header
+            }
         }
         .frame(height: expanded ? height : 60, alignment: .top)
         .background(RoundedRectangle(cornerRadius: expanded ? 20 : 30, style: .continuous).fill(Amber.sheet))
@@ -60,27 +84,20 @@ struct LivePanel: View {
                     .animation(.easeOut(duration: 0.2), value: status)
             }
             Spacer(minLength: 8)
-            if expanded {
-                if let slug, !building {
-                    Button {
-                        if let url = store.openURL(slug, draft: store.tool(slug)?.has_draft == true) { store.host?.openInRealSafari(url) }
-                    } label: {
-                        Image(systemName: "safari").font(.system(size: 16, weight: .semibold)).foregroundStyle(Amber.ink)
-                            .frame(width: 36, height: 36).background(Circle().fill(Amber.wash))
-                    }
-                    .accessibilityLabel("Open in Safari")
-                }
-                Button { close() } label: {
-                    Image(systemName: "xmark").font(.system(size: 14, weight: .bold)).foregroundStyle(Amber.ink)
-                        .frame(width: 36, height: 36).background(Circle().fill(Amber.wash))
-                }
-                .accessibilityLabel("Close preview")
-            } else {
-                Image(systemName: "chevron.down").font(.system(size: 14, weight: .bold)).foregroundStyle(Amber.muted)
-            }
+            Image(systemName: "chevron.down").font(.system(size: 14, weight: .bold)).foregroundStyle(Amber.muted)
         }
         .padding(.horizontal, 12)
         .frame(height: 60)
+    }
+
+    private func cornerButton(_ icon: String, label: String, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            Image(systemName: icon).font(.system(size: 14, weight: .bold)).foregroundStyle(Amber.ink)
+                .frame(width: 34, height: 34)
+                .background(Circle().fill(.ultraThinMaterial))
+                .overlay(Circle().strokeBorder(Amber.hairline, lineWidth: 1))
+        }
+        .accessibilityLabel(label)
     }
 
     private var status: String {

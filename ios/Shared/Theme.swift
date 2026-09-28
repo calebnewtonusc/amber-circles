@@ -18,8 +18,12 @@ enum Amber {
     static let muted = Color(red: 102 / 255, green: 102 / 255, blue: 102 / 255)
     static let hairline = Color(red: 235 / 255, green: 235 / 255, blue: 235 / 255)
     static let wash = Color(red: 245 / 255, green: 245 / 255, blue: 245 / 255)
-    /// Amber is the brand mark only now, the dot next to the name.
-    static let amber = Color(red: 1, green: 179 / 255, blue: 0)
+    /// Amber carries the actions now (Caleb: "amber color into the app, it
+    /// shows more contrast with the apps being made, and it should still look
+    /// like an Apple product"). #E8820C is deep enough for white 17pt bold
+    /// text at 3:1, and close to Apple's own system orange.
+    static let amber = Color(red: 232 / 255, green: 130 / 255, blue: 12 / 255)
+    static let amberSoft = Color(red: 1, green: 244 / 255, blue: 229 / 255)
     static let link = Color(red: 0, green: 112 / 255, blue: 243 / 255)
     static let present = Color(red: 0, green: 112 / 255, blue: 243 / 255)
     static let danger = Color(red: 238 / 255, green: 0, blue: 0)
@@ -52,7 +56,7 @@ struct BlockButton: ButtonStyle {
             .foregroundStyle(primary ? Color.white : Amber.ink)
             .padding(.horizontal, 20)
             .frame(maxWidth: full ? .infinity : nil, minHeight: 50)
-            .background(Capsule().fill(primary ? Amber.ink : Amber.sheet))
+            .background(Capsule().fill(primary ? Amber.amber : Amber.sheet))
             .overlay(Capsule().strokeBorder(primary ? Color.clear : Amber.hairline, lineWidth: 1))
             .opacity(configuration.isPressed ? 0.8 : 1)
             .scaleEffect(configuration.isPressed ? 0.98 : 1)

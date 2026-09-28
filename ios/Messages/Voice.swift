@@ -86,6 +86,7 @@ final class Listener: ObservableObject {
 
 /// The big button. Amber, because it is the one thing on screen you press.
 struct HoldToTalk: View {
+    @EnvironmentObject var store: ChatStore
     @StateObject private var listener = Listener()
     var label = "Hold to talk"
     /// Pressing talk cuts Amber off at once, before the microphone opens
@@ -100,7 +101,7 @@ struct HoldToTalk: View {
                 Image(systemName: listener.isListening ? "waveform" : "mic.fill")
                     .font(.system(size: 22, weight: .bold))
                     .symbolEffect(.variableColor.iterative, isActive: listener.isListening)
-                Text(listener.isListening ? (listener.text.isEmpty ? "Listening…" : listener.text) : label)
+                Text(listener.isListening ? "Listening. Let go to send" : label)
                     .font(Amber.font(18, .bold))
                     .lineLimit(3)
                     .multilineTextAlignment(.leading)
@@ -109,7 +110,8 @@ struct HoldToTalk: View {
             .foregroundStyle(Color.white)
             .padding(.horizontal, 22)
             .frame(maxWidth: .infinity, minHeight: 60)
-            .background(Capsule().fill(Amber.ink))
+            .background(Capsule().fill(Amber.amber))
+            .shadow(color: Amber.amber.opacity(listener.isListening ? 0.45 : 0.25), radius: listener.isListening ? 16 : 8, y: 4)
             .overlay(Capsule().strokeBorder(Color.white.opacity(listener.isListening ? 0.35 : 0), lineWidth: 3).padding(3))
             .scaleEffect(pressing ? 0.98 : 1)
             .animation(.easeOut(duration: 0.12), value: pressing)
@@ -130,6 +132,12 @@ struct HoldToTalk: View {
                         }
                     }
             )
+            .onChange(of: listener.text) { _, words in
+                if listener.isListening { store.liveSpeech = words }
+            }
+            .onChange(of: listener.isListening) { _, on in
+                if on { store.liveSpeech = "" } else { store.liveSpeech = nil }
+            }
             .accessibilityLabel(label)
             .accessibilityHint("Hold, say it, then let go")
             if let problem = listener.problem {
@@ -159,8 +167,12 @@ final class Speaker: NSObject, ObservableObject, AVAudioPlayerDelegate {
         guard let (data, response) = try? await URLSession.shared.data(for: request),
               (response as? HTTPURLResponse)?.statusCode == 200 else { return }
         do {
+            // Plain playback, not play-and-record: iOS refuses play-and-record
+            // until the microphone is allowed, so someone who only typed never
+            // heard Amber at all (Caleb's phone, build 41). Playback also plays
+            // with the silent switch on, which is what a reply should do.
             let session = AVAudioSession.sharedInstance()
-            try session.setCategory(.playAndRecord, mode: .default, options: [.defaultToSpeaker, .allowBluetoothHFP])
+            try session.setCategory(.playback, mode: .spokenAudio, options: [.duckOthers])
             try session.setActive(true)
             player = try AVAudioPlayer(data: data)
             player?.delegate = self
