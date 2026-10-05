@@ -8,6 +8,8 @@ enum Route: Hashable {
     /// A new app being talked through, before it exists. Its key starts
     /// with "new-"; when the build lands it becomes .tool(slug).
     case draft(String)
+    /// A group card (Together.swift): one shared question, everyone's answers.
+    case card(String)
 }
 
 /// A new app the chat is talking about but has not built yet.
@@ -90,6 +92,8 @@ struct BuildState: Equatable {
 @MainActor
 final class ChatStore: ObservableObject {
     @Published var session: Session?
+    /// Group cards for this chat. Lives here so it follows the chat's session.
+    let together = TogetherStore()
     @Published var overview: ChatOverview?
     @Published var name: String = UserDefaults.standard.string(forKey: "amber.name") ?? ""
     @Published var error: String?
@@ -160,6 +164,7 @@ final class ChatStore: ObservableObject {
         let id: String? = switch route {
         case .tool(let slug): slug
         case .draft(let key): key
+        case .card(let id): id
         case .home: nil
         }
         // Back into whatever it was opened from: its card in the chat or its
@@ -245,7 +250,7 @@ final class ChatStore: ObservableObject {
 
     weak var host: MessagesViewController?
     private var participant = ""
-    private var pendingInvite: (chat: String, invite: String, slug: String?)?
+    private var pendingInvite: (chat: String, invite: String, slug: String?, card: String?)?
 
     /// This thread, not this phone. localParticipantIdentifier is the same
     /// for this device in every thread, so keying by it alone opened one
@@ -286,6 +291,7 @@ final class ChatStore: ObservableObject {
     }
 
     func attach(_ conversation: MSConversation) {
+        together.chat = self
         participant = conversation.localParticipantIdentifier.uuidString
         let people = ([participant] + conversation.remoteParticipantIdentifiers.map(\.uuidString)).sorted().joined(separator: ",")
         thread = SHA256.hash(data: Data(people.utf8)).prefix(12).map { String(format: "%02x", $0) }.joined()
@@ -309,11 +315,13 @@ final class ChatStore: ObservableObject {
             if session == nil, let legacy = legacySession, legacy.chat == link.chat { claimLegacy() }
             if session?.chat != link.chat {
                 pendingInvite = link
+            } else if let card = link.card {
+                route = .card(card)
             } else if let slug = link.slug {
                 route = .tool(slug)
             }
         }
-        Task { await joinIfNeeded(); await refresh() }
+        Task { await joinIfNeeded(); await refresh(); await together.load() }
     }
 
     func saveName(_ value: String) {
@@ -356,10 +364,25 @@ final class ChatStore: ObservableObject {
                 "api/chats/\(link.chat)/join", method: "POST",
                 body: ["invite": link.invite, "name": name, "participant": participant])
             store(Session(chat: joined.chat, token: joined.token, invite: link.invite, name: name))
-            if let slug = link.slug { route = .tool(slug) }
+            if let card = link.card { route = .card(card) } else if let slug = link.slug { route = .tool(slug) }
         } catch {
             self.error = error.localizedDescription
         }
+    }
+
+    /// This thread's chat on the server, started now if nobody has talked to
+    /// Amber here yet. A group card is often the first thing done in a thread,
+    /// and without this it had no chat to live in and did nothing.
+    func ensureSession() async -> Session? {
+        if let session { return session }
+        do {
+            let started: Joined = try await API.call(
+                "api/chats", method: "POST", body: ["name": name, "participant": participant])
+            store(Session(chat: started.chat, token: started.token, invite: started.invite ?? "", name: name))
+        } catch {
+            self.error = error.localizedDescription
+        }
+        return session
     }
 
     func refresh() async {
@@ -731,12 +754,13 @@ final class ChatStore: ObservableObject {
 
     // MARK: the bubble
 
-    func link(for slug: String?) -> URL? {
+    func link(for slug: String?, card: String? = nil) -> URL? {
         guard let session else { return nil }
         var components = URLComponents(url: API.base, resolvingAgainstBaseURL: false)
         components?.path = "/c/\(session.chat)"
         var fragment = "i=\(session.invite)"
         if let slug { fragment += "&t=\(slug)" }
+        if let card { fragment += "&k=\(card)" }
         components?.fragment = fragment
         return components?.url
     }
@@ -811,7 +835,7 @@ final class ChatStore: ObservableObject {
         host?.requestPresentationStyle(.compact)
     }
 
-    static func parse(_ url: URL) -> (chat: String, invite: String, slug: String?)? {
+    static func parse(_ url: URL) -> (chat: String, invite: String, slug: String?, card: String?)? {
         let parts = url.path.split(separator: "/")
         guard parts.count == 2, parts[0] == "c" else { return nil }
         var values: [String: String] = [:]
@@ -820,6 +844,6 @@ final class ChatStore: ObservableObject {
             if kv.count == 2 { values[kv[0]] = kv[1] }
         }
         guard let invite = values["i"] else { return nil }
-        return (String(parts[1]), invite, values["t"])
+        return (String(parts[1]), invite, values["t"], values["k"])
     }
 }

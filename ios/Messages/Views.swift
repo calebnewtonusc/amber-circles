@@ -102,6 +102,7 @@ extension AnyTransition {
 
 struct RootView: View {
     @EnvironmentObject var store: ChatStore
+    @EnvironmentObject var together: TogetherStore
     @Namespace private var titles
     /// The sheet's height. iMessage resizes the sheet outside SwiftUI, so the
     /// layout sat still and then snapped when the new size landed; changes
@@ -152,6 +153,8 @@ struct RootView: View {
                                     .transition(.reveal(from: store.revealFrom)).zIndex(1)
                             case .draft(let key):
                                 DraftView(key: key).transition(.reveal(from: store.revealFrom)).zIndex(1)
+                            case .card(let id):
+                                CardView(id: id).transition(.reveal(from: store.revealFrom)).zIndex(1)
                             }
                         } else {
                             CompactView()
@@ -210,6 +213,7 @@ struct RootView: View {
         }
         .environment(\.titles, titles)
         .tint(Amber.ink)
+        .sheet(item: $together.composing) { kind in ComposerView(kind: kind) }
     }
 }
 
@@ -313,6 +317,8 @@ struct HomeView: View {
                     .scrollBounceBehavior(.basedOnSize)
                     .frame(maxHeight: 236)
                     .fixedSize(horizontal: false, vertical: true)
+                // Amber's own features, made for the group.
+                TogetherStrip()
                 HomeActivityTray(frames: $frames)
             }
             .padding(.horizontal, 20).padding(.top, 6).padding(.bottom, 8)
@@ -1080,6 +1086,7 @@ struct TalkBar: View {
             case .home: await store.homeSay(text)
             case .draft(let key): await store.say(key, text)
             case .tool(let slug): await store.say(slug, text, open: { store.host?.openInRealSafari($0) })
+            case .card: await store.homeSay(text)
             }
         }
     }
@@ -1370,7 +1377,7 @@ struct TopBar: View {
         switch store.route {
         case .tool(let slug): slug
         case .draft(let key): key
-        case .home: nil
+        case .home, .card: nil
         }
     }
 
@@ -1388,6 +1395,7 @@ struct TopBar: View {
         case .home: return "Made in this chat"
         case .tool(let slug): return store.tool(slug)?.title ?? ""
         case .draft(let key): return store.drafts.first { $0.id == key }?.title ?? "New project"
+        case .card(let id): return store.together.card(id)?.title ?? ""
         }
     }
 
@@ -1680,9 +1688,7 @@ struct StarterChips: View {
     @EnvironmentObject var store: ChatStore
     private let starters: [(String, String)] = [
         ("Sign-up sheet", "Make a sign-up sheet for our next event"),
-        ("Group poll", "Make a poll so the group can vote"),
-        ("Plan a hangout", "Build a page to plan our next hangout"),
-        ("Split costs", "Make a tracker to split costs between us"),
+        ("Packing list", "Make a shared packing list for our trip"),
     ]
     @Environment(\.titles) private var titles
     var body: some View {
@@ -1716,9 +1722,7 @@ struct CompactView: View {
     private var count: Int { tools.count + store.drafts.count }
     private let starters: [(String, String)] = [
         ("Sign-up sheet", "Make a sign-up sheet for our next event"),
-        ("Group poll", "Make a poll so the group can vote"),
-        ("Plan a hangout", "Build a page to plan our next hangout"),
-        ("Split costs", "Make a tracker to split costs between us"),
+        ("Packing list", "Make a shared packing list for our trip"),
     ]
 
     var body: some View {
@@ -1757,6 +1761,8 @@ struct CompactView: View {
                 ForEach(store.drafts) { draft in pill(draft.title) { open(.draft(draft.id)) }.sharedTitle("proj-\(draft.id)", in: titles) }
                 ForEach(tools) { tool in pill(tool.title) { open(.tool(tool.slug)) }.sharedTitle("proj-\(tool.slug)", in: titles) }
             }
+            // Amber's group cards, one pill high.
+            CompactCards()
             row {
                 ForEach(starters, id: \.0) { label, prompt in
                     Button {

@@ -19,6 +19,7 @@ Built for Origin Weekend Fall 2026, Prompt F, "A Cloud for Small Software", by C
 - **Everyone in the chat can change it.** Changes are patches, not rewrites, so "make the names bigger" takes seconds. A change stays private to whoever asked until they tap **Publish online**. **Send to chat** drops a bubble for it into the conversation.
 - **Pinned comments, like Google Docs.** Double-tap anything in the preview to pin a comment to that exact element. Each person has their own letter and colour. Reply and resolve right on the pin. A pin whose element is removed resolves itself.
 - **Activity.** Every edit, publish, share, rename and open comment, per project and across the whole chat.
+- **Group cards, from your own Amber.** Free time, Split, Vote, Who knows and Remind us are cards the whole chat answers, one row per person, so nobody overwrites anybody. If you have the Amber app, Amber answers for you on your phone: your free half hours from your calendar, real places to vote on, the people you know (you pick who to share), a reminder saved in your Amber. Only the answer reaches the chat. Without Amber you tap your answer in by hand.
 - **Memory.** Amber remembers each person's style across chats (with Sign in with Apple) and never carries one chat's contents into another.
 
 ## How it works

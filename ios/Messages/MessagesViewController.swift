@@ -12,7 +12,7 @@ final class MessagesViewController: MSMessagesAppViewController {
         // white boxes (Caleb's phone, build 41).
         overrideUserInterfaceStyle = .light
         store.host = self
-        let hosting = UIHostingController(rootView: RootView().environmentObject(store))
+        let hosting = UIHostingController(rootView: RootView().environmentObject(store).environmentObject(store.together))
         hosting.view.backgroundColor = .clear
         addChild(hosting)
         hosting.view.frame = view.bounds
@@ -119,11 +119,11 @@ final class MessagesViewController: MSMessagesAppViewController {
 /// full of them reads like a shelf of labelled folders.
 enum BubbleArt {
     @MainActor
-    static func render(title: String, by: String) -> UIImage? {
+    static func render(title: String, by: String, tagline: String = "Let's build together", action: String = "Open") -> UIImage? {
         let card = VStack(alignment: .leading, spacing: 16) {
             HStack(spacing: 10) {
                 Image("AmberLogo").resizable().scaledToFit().frame(height: 30)
-                Text("Let's build together").font(Amber.font(26, .bold)).foregroundStyle(Amber.muted)
+                Text(tagline).font(Amber.font(26, .bold)).foregroundStyle(Amber.muted)
             }
             Spacer(minLength: 0)
             Text(title).font(Amber.font(56, .heavy)).tracking(-1.6).foregroundStyle(Amber.ink)
@@ -131,7 +131,7 @@ enum BubbleArt {
             HStack {
                 Text("By \(by)").font(Amber.font(24)).foregroundStyle(Amber.body)
                 Spacer()
-                Text("Open").font(Amber.font(24, .bold)).foregroundStyle(.white)
+                Text(action).font(Amber.font(24, .bold)).foregroundStyle(.white)
                     .padding(.horizontal, 26).padding(.vertical, 12)
                     .background(Capsule().fill(Amber.ink))
             }

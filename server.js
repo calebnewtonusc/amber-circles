@@ -17,6 +17,7 @@ import { streamSSE } from "hono/streaming";
 import { build, catchUp, describeChange, explain, patch, talk, titleFrom } from "./builder.js";
 import { converse, extractMemories } from "./agent.js";
 import { verifyAppleToken } from "./apple.js";
+import { CARD_KINDS, CardError, cleanEntry, cleanSpec } from "./cards.js";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const PORT = Number(process.env.PORT || 8787);
@@ -1635,6 +1636,99 @@ app.get("/api/chats/:id/board", async (c) => {
   ]);
   const building = [...buildingNow.values()].filter((b) => b.circle === circleId).map(({ who, what }) => ({ who, what }));
   return c.json({ comments, ideas, building, activity });
+});
+
+// ---------- group cards (cards.js has the shapes) ----------
+
+async function chatMemberIn(c, circleId) {
+  const owner = await requireOwner(c);
+  if (!owner.chatMember || owner.chatMember.circleId !== circleId) throw new HttpError(403, "You are not in this chat.");
+  return owner.chatMember;
+}
+
+function asCardError(fn) {
+  try {
+    return fn();
+  } catch (error) {
+    if (error instanceof CardError) throw new HttpError(400, error.message);
+    throw error;
+  }
+}
+
+async function cardsFor(circleId, { id } = {}) {
+  const { rows: cards } = await pool.query(
+    `select k.id, k.kind, k.title, k.spec, k.created_at, k.closed_at, k.made_by, m.name as made_by_name
+       from cards k left join members m on m.id = k.made_by
+      where k.circle_id = $1 and ($2::text is null or k.id = $2)
+        and (k.closed_at is null or k.closed_at > now() - interval '1 day')
+      order by k.created_at desc limit 20`,
+    [circleId, id ?? null],
+  );
+  if (!cards.length) return [];
+  const { rows: entries } = await pool.query(
+    `select e.card_id, e.member_id, m.name, e.data, e.updated_at from card_entries e
+       join members m on m.id = e.member_id where e.card_id = any($1) order by e.updated_at`,
+    [cards.map((k) => k.id)],
+  );
+  return cards.map((k) => ({ ...k, entries: entries.filter((e) => e.card_id === k.id).map(({ card_id, ...e }) => e) }));
+}
+
+app.get("/api/chats/:id/cards", async (c) => {
+  const me = await chatMemberIn(c, c.req.param("id"));
+  return c.json({ me: me.id, cards: await cardsFor(me.circleId) });
+});
+
+app.post("/api/chats/:id/cards", async (c) => {
+  const me = await chatMemberIn(c, c.req.param("id"));
+  const body = await c.req.json().catch(() => ({}));
+  if (!CARD_KINDS.includes(body.kind)) throw new HttpError(400, "That kind of card does not exist.");
+  const title = requireText(body.title, "title", 120);
+  const spec = asCardError(() => cleanSpec(body.kind, body.spec));
+  const id = newId("card");
+  await pool.query("insert into cards (id, circle_id, kind, title, spec, made_by) values ($1, $2, $3, $4, $5, $6)", [
+    id, me.circleId, body.kind, title, spec, me.id,
+  ]);
+  const [card] = await cardsFor(me.circleId, { id });
+  return c.json({ card });
+});
+
+async function cardForMember(c) {
+  const owner = await requireOwner(c);
+  if (!owner.chatMember) throw new HttpError(403, "Open this from the chat.");
+  const { rows } = await pool.query("select id, kind, spec, circle_id, made_by, closed_at from cards where id = $1", [c.req.param("id")]);
+  const card = rows[0];
+  // Same answer for "no such card" and "not your chat's card", so ids cannot be probed.
+  if (!card || card.circle_id !== owner.chatMember.circleId) throw new HttpError(404, "That card is not in this chat.");
+  return { card, me: owner.chatMember };
+}
+
+// Your answer, and only yours: the row is keyed by the caller's member id.
+app.put("/api/cards/:id/mine", async (c) => {
+  const { card, me } = await cardForMember(c);
+  if (card.closed_at) throw new HttpError(409, "This card is closed.");
+  const body = await c.req.json().catch(() => ({}));
+  const data = asCardError(() => cleanEntry(card.kind, card.spec, body.data));
+  await pool.query(
+    `insert into card_entries (card_id, member_id, data) values ($1, $2, $3)
+     on conflict (card_id, member_id) do update set data = excluded.data, updated_at = now()`,
+    [card.id, me.id, data],
+  );
+  const [fresh] = await cardsFor(me.circleId, { id: card.id });
+  return c.json({ card: fresh });
+});
+
+app.delete("/api/cards/:id/mine", async (c) => {
+  const { card, me } = await cardForMember(c);
+  await pool.query("delete from card_entries where card_id = $1 and member_id = $2", [card.id, me.id]);
+  return c.json({ ok: true });
+});
+
+// Only whoever made a card can close it.
+app.post("/api/cards/:id/close", async (c) => {
+  const { card, me } = await cardForMember(c);
+  if (card.made_by !== me.id) throw new HttpError(403, "Only the person who started this can close it.");
+  await pool.query("update cards set closed_at = now() where id = $1", [card.id]);
+  return c.json({ ok: true });
 });
 
 // A new app is talked through before it exists. When it lands, the talk

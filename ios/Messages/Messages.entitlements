@@ -6,5 +6,10 @@
 	<array>
 		<string>Default</string>
 	</array>
+	<key>keychain-access-groups</key>
+	<array>
+		<string>$(AppIdentifierPrefix)com.calebnewton.amber.messages</string>
+		<string>$(AppIdentifierPrefix)com.joinrytual.amber.shared</string>
+	</array>
 </dict>
 </plist>

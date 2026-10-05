@@ -269,3 +269,30 @@ create table if not exists person_memories (
   updated_at  timestamptz not null default now(),
   unique (person_id, name)
 );
+
+-- Group cards: Amber's own features, made for a chat. A card is the shared
+-- question (when is everyone free, who pays what, where do we eat, who do we
+-- know, remind us), and each member answers it in their own row. Rows are
+-- keyed by member, so two people answering at once can never overwrite each
+-- other, and a member can only ever write their own. What goes in a row is
+-- computed on that person's phone from their own Amber account (their free
+-- time, the people they chose to share); calendars and contacts never come
+-- here, only the answer.
+create table if not exists cards (
+  id          text primary key,
+  circle_id   text not null references circles(id) on delete cascade,
+  kind        text not null,
+  title       text not null,
+  spec        jsonb not null default '{}',
+  made_by     text references members(id) on delete set null,
+  created_at  timestamptz not null default now(),
+  closed_at   timestamptz
+);
+create index if not exists cards_circle_idx on cards(circle_id, created_at desc);
+create table if not exists card_entries (
+  card_id     text not null references cards(id) on delete cascade,
+  member_id   text not null references members(id) on delete cascade,
+  data        jsonb not null,
+  updated_at  timestamptz not null default now(),
+  primary key (card_id, member_id)
+);

@@ -79,6 +79,13 @@ targets:
       path: Messages/Messages.entitlements
       properties:
         com.apple.developer.applesignin: [Default]
+        # The second group is where the Amber app (amber-ios) keeps its
+        # session, so anyone signed in to Amber is signed in here
+        # (Messages/AmberLink.swift). The extension's own group stays first,
+        # because the first one is where its own keychain items default to.
+        keychain-access-groups:
+          - $(AppIdentifierPrefix)com.calebnewton.amber.messages
+          - $(AppIdentifierPrefix)com.joinrytual.amber.shared
     settings:
       base:
         CODE_SIGN_ENTITLEMENTS: Messages/Messages.entitlements
