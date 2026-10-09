@@ -52,12 +52,20 @@ export async function headline(updates) {
 // ---------- gathering what the task points at ----------
 
 /** Commit and PR references in a proof link. Only github.com, only these shapes. */
-export function proofRefs(proof) {
-  const m =
-    /^https:\/\/github\.com\/([\w.-]+)\/([\w.-]+)\/(commit|pull)\/([0-9a-f]{7,40}|\d+)(?:[/?#].*)?$/i.exec(
-      proof || "",
-    );
-  if (!m) return [];
+// Only repos the team works in. Without this a member could set a task's proof
+// to any repo the server's token can read and have the check summarize its
+// private diff into the chat (security review, 2026-10-09).
+export function checkableRepos(boardRepo) {
+  return new Set(
+    [boardRepo, ...(process.env.TEAM_CHECK_REPOS || "").split(",")]
+      .map((r) => r.trim().toLowerCase())
+      .filter(Boolean),
+  );
+}
+
+export function proofRefs(proof, allowed = new Set()) {
+  const m = /^https:\/\/github\.com\/([\w.-]+)\/([\w.-]+)\/(commit|pull)\/([0-9a-f]{7,40}|\d+)(?:[/?#].*)?$/i.exec(proof || "");
+  if (!m || !allowed.has(`${m[1]}/${m[2]}`.toLowerCase())) return [];
   return [{ owner: m[1], repo: m[2], kind: m[3].toLowerCase(), ref: m[4] }];
 }
 
@@ -102,7 +110,7 @@ export async function gather(gh, repo, branch, task) {
       text: `${r.json.commit.message}\n${patchText(r.json.files)}`,
     });
   }
-  for (const p of proofRefs(task.proof)) {
+  for (const p of proofRefs(task.proof, checkableRepos(repo))) {
     if (p.kind === "commit") {
       const r = await gh(`/repos/${p.owner}/${p.repo}/commits/${p.ref}`);
       if (r.status === 200)
