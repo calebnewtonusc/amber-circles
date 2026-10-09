@@ -77,3 +77,19 @@ xcodebuild -exportArchive -archivePath /tmp/Amber.xcarchive -exportOptionsPlist 
 - Sign in with Apple has not been confirmed on a real phone. "Continue without signing in" always works.
 - Pinned comments were tested in a browser, not yet inside iMessage on a phone.
 - The public TestFlight link (https://testflight.apple.com/join/7DMFRSv8) waits on Apple's beta review.
+
+## TestFlight from the API (added 2026-10-09)
+
+`tools/asc.py` signs App Store Connect API calls with the team key, so testers, groups and beta review need no browser. The app is `6765705839` ("Amber Keyboard" in App Store Connect, bundle `com.calebnewton.amber`). The external group "Try Amber" is `888a890d-dd58-4cab-b166-408b9c85b1fe` and owns the public link https://testflight.apple.com/join/7DMFRSv8.
+
+- Invite someone: `POST /v1/betaTesters` with their Apple ID email and a `betaGroups` relationship to Try Amber. They get Apple's email.
+- Ship a build to testers: `POST /v1/betaGroups/<group>/relationships/builds`, then `POST /v1/betaAppReviewSubmissions` for that build. Builds after the first approval have been approved within minutes.
+- Internal groups (Origin Weekend) refuse a build POST with 422 because they get every build already.
+
+Bump `CURRENT_PROJECT_VERSION` before every upload. A second upload of a build number that already exists still prints "Upload succeeded" and is then dropped by Apple without a word (build 62, 2026-10-09). Check the build list after uploading.
+
+## Team board (added 2026-10-09)
+
+`team.js` puts the Chewbacca team board (team/tasks on calebnewtonusc/Chewbacca) in a linked chat, and `team-check.js` asks Claude whether a finished task's commits actually do it. Railway vars: `TEAM_LINK_CODE`, `TEAM_GITHUB_TOKEN`, `TEAM_CHECK_REPOS`. Tests run only against a local server with `TEAM_LOCAL_DIR`, never production, because they write tasks. `claude-sonnet-5-5` refuses a forced `tool_choice`, so the check asks for its tool in the prompt instead.
+
+Built with Chewbacca
