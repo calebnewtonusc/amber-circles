@@ -1155,7 +1155,15 @@ async function teamPage(chatId, memberToken, frame) {
       <p class="error-text" id="team-error" role="alert"></p></div>`);
     app.querySelectorAll("[data-me]").forEach((b) => b.addEventListener("click", async () => {
       try {
-        await api("/me", { method: "POST", body: JSON.stringify({ name: b.dataset.me }) });
+        try {
+          await api("/me", { method: "POST", body: JSON.stringify({ name: b.dataset.me }) });
+        } catch (error) {
+          // That name is already someone here (usually your own phone): the team code proves it's you.
+          if (!/team code/.test(error.message)) throw error;
+          const code = window.prompt(error.message);
+          if (!code) return;
+          await api("/me", { method: "POST", body: JSON.stringify({ name: b.dataset.me, code }) });
+        }
         teamPage(chatId, memberToken, frame);
       } catch (error) {
         app.querySelector("#team-error").textContent = error.message;

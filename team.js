@@ -331,6 +331,31 @@ export function registerTeam(app, { pool, chatMemberIn, HttpError }) {
     );
   }
 
+  // The code is 6 hex characters after "chewb-", about 16.7 million values,
+  // and nothing limited guesses (security review, 2026-10-09). Ten misses an
+  // hour per chat member, and joining a chat is free, so also per server: 200
+  // an hour puts a full search at about 9 years.
+  const MISSES_PER_MEMBER = 10;
+  const MISSES_PER_SERVER = 200;
+  const misses = new Map();
+  let serverMisses = { hour: 0, count: 0 };
+
+  function checkCode(me, code) {
+    const hour = Math.floor(Date.now() / 3_600_000);
+    if (serverMisses.hour !== hour) serverMisses = { hour, count: 0 };
+    const mine = misses.get(me.id);
+    const count = mine?.hour === hour ? mine.count : 0;
+    if (count >= MISSES_PER_MEMBER || serverMisses.count >= MISSES_PER_SERVER)
+      bad(429, "Too many wrong codes. Try again in an hour.");
+    const given = createHash("sha256").update(String(code ?? "").trim().toLowerCase()).digest();
+    const wanted = createHash("sha256").update(process.env.TEAM_LINK_CODE.trim().toLowerCase()).digest();
+    if (!timingSafeEqual(given, wanted)) {
+      misses.set(me.id, { hour, count: count + 1 });
+      serverMisses.count++;
+      bad(403, "That code is not the team's. Ask Caleb for it.");
+    }
+  }
+
   async function linkedMember(c) {
     if (!teamConfigured()) bad(503, "The team board is not switched on here.");
     const me = await chatMemberIn(c, c.req.param("id"));
@@ -384,18 +409,7 @@ export function registerTeam(app, { pool, chatMemberIn, HttpError }) {
     if (!teamConfigured()) bad(503, "The team board is not switched on here.");
     const me = await chatMemberIn(c, c.req.param("id"));
     const body = await c.req.json().catch(() => ({}));
-    const given = createHash("sha256")
-      .update(
-        String(body.code ?? "")
-          .trim()
-          .toLowerCase(),
-      )
-      .digest();
-    const wanted = createHash("sha256")
-      .update(process.env.TEAM_LINK_CODE.trim().toLowerCase())
-      .digest();
-    if (!timingSafeEqual(given, wanted))
-      bad(403, "That code is not the team's. Ask Caleb for it.");
+    checkCode(me, body.code);
     await pool.query(
       "insert into team_links (circle_id, linked_by) values ($1, $2) on conflict (circle_id) do nothing",
       [me.circleId, me.id],
@@ -424,6 +438,13 @@ export function registerTeam(app, { pool, chatMemberIn, HttpError }) {
     const takenByOther = held.some((r) => r.team_name === name && r.member_id !== me.id);
     if (mine && mine.team_name !== name && takenByOther)
       bad(409, `${name} is already someone else in this chat.`);
+    // Anyone holding a forwarded bubble can join the chat, so a name someone
+    // here already holds (your phone, now your Mac) takes the team code too
+    // (security review, 2026-10-09).
+    if (!mine && takenByOther) {
+      if (body.code === undefined) bad(409, `${name} is already in this chat. Enter the team code to be ${name} here too.`);
+      checkCode(me, body.code);
+    }
     await pool.query(
       `insert into team_people (member_id, team_name) values ($1, $2)
        on conflict (member_id) do update set team_name = excluded.team_name`,

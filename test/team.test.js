@@ -371,3 +371,24 @@ test("a newest task file that does not parse still counts toward the next id", {
   assert.equal(made.status, 200);
   assert.equal(made.json.task.id, `CHW-${broken + 1}`);
 });
+
+test("a second member taking a name already held here needs the team code", { skip }, async () => {
+  const { caleb, jake } = await chat();
+  await call(`/api/chats/${caleb.chat}/team/link`, { method: "POST", chat: caleb.token, body: { code: CODE } });
+  await call(`/api/chats/${caleb.chat}/team/me`, { method: "POST", chat: caleb.token, body: { name: "Caleb" } });
+  const bare = await call(`/api/chats/${jake.chat}/team/me`, { method: "POST", chat: jake.token, body: { name: "Caleb" } });
+  assert.equal(bare.status, 409);
+  const wrong = await call(`/api/chats/${jake.chat}/team/me`, { method: "POST", chat: jake.token, body: { name: "Caleb", code: "nope" } });
+  assert.equal(wrong.status, 403);
+  const right = await call(`/api/chats/${jake.chat}/team/me`, { method: "POST", chat: jake.token, body: { name: "Caleb", code: CODE } });
+  assert.equal(right.status, 200);
+});
+
+test("wrong codes stop after ten in an hour", { skip }, async () => {
+  const { caleb } = await chat();
+  let last;
+  for (let i = 0; i < 11; i++) last = await call(`/api/chats/${caleb.chat}/team/link`, { method: "POST", chat: caleb.token, body: { code: `guess-${i}` } });
+  assert.equal(last.status, 429);
+  const right = await call(`/api/chats/${caleb.chat}/team/link`, { method: "POST", chat: caleb.token, body: { code: CODE } });
+  assert.equal(right.status, 429, "even the right code waits out the hour");
+});
