@@ -332,26 +332,34 @@ export function registerTeam(app, { pool, chatMemberIn, HttpError }) {
   }
 
   // The code is 6 hex characters after "chewb-", about 16.7 million values,
-  // and nothing limited guesses (security review, 2026-10-09). Ten misses an
-  // hour per chat member, and joining a chat is free, so also per server: 200
-  // an hour puts a full search at about 9 years.
+  // and nothing limited guesses (security review, 2026-10-09). Joining a chat
+  // is free, so a per-member cap alone is bypassed by joining again; the IP cap
+  // is what binds. A server-wide cap was tried first and let one stranger lock
+  // the whole team out for an hour (security review, same day).
+  // At 30 an hour per IP a full search from one address takes about 64 years.
   const MISSES_PER_MEMBER = 10;
-  const MISSES_PER_SERVER = 200;
+  const MISSES_PER_IP = 30;
   const misses = new Map();
-  let serverMisses = { hour: 0, count: 0 };
 
-  function checkCode(me, code) {
+  function bump(key, hour) {
+    const cur = misses.get(key);
+    const count = cur?.hour === hour ? cur.count : 0;
+    return { count, miss: () => misses.set(key, { hour, count: count + 1 }) };
+  }
+
+  function checkCode(c, me, code) {
     const hour = Math.floor(Date.now() / 3_600_000);
-    if (serverMisses.hour !== hour) serverMisses = { hour, count: 0 };
-    const mine = misses.get(me.id);
-    const count = mine?.hour === hour ? mine.count : 0;
-    if (count >= MISSES_PER_MEMBER || serverMisses.count >= MISSES_PER_SERVER)
+    if (misses.size > 10_000) misses.clear();
+    const ip = (c.req.header("x-forwarded-for") || "").split(",")[0].trim() || "unknown";
+    const byMember = bump(`m:${me.id}`, hour);
+    const byIp = bump(`ip:${ip}`, hour);
+    if (byMember.count >= MISSES_PER_MEMBER || byIp.count >= MISSES_PER_IP)
       bad(429, "Too many wrong codes. Try again in an hour.");
     const given = createHash("sha256").update(String(code ?? "").trim().toLowerCase()).digest();
     const wanted = createHash("sha256").update(process.env.TEAM_LINK_CODE.trim().toLowerCase()).digest();
     if (!timingSafeEqual(given, wanted)) {
-      misses.set(me.id, { hour, count: count + 1 });
-      serverMisses.count++;
+      byMember.miss();
+      byIp.miss();
       bad(403, "That code is not the team's. Ask Caleb for it.");
     }
   }
@@ -409,7 +417,7 @@ export function registerTeam(app, { pool, chatMemberIn, HttpError }) {
     if (!teamConfigured()) bad(503, "The team board is not switched on here.");
     const me = await chatMemberIn(c, c.req.param("id"));
     const body = await c.req.json().catch(() => ({}));
-    checkCode(me, body.code);
+    checkCode(c, me, body.code);
     await pool.query(
       "insert into team_links (circle_id, linked_by) values ($1, $2) on conflict (circle_id) do nothing",
       [me.circleId, me.id],
@@ -443,7 +451,7 @@ export function registerTeam(app, { pool, chatMemberIn, HttpError }) {
     // (security review, 2026-10-09).
     if (!mine && takenByOther) {
       if (body.code === undefined) bad(409, `${name} is already in this chat. Enter the team code to be ${name} here too.`);
-      checkCode(me, body.code);
+      checkCode(c, me, body.code);
     }
     await pool.query(
       `insert into team_people (member_id, team_name) values ($1, $2)
