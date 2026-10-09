@@ -331,8 +331,9 @@ export function registerTeam(app, { pool, chatMemberIn, HttpError }) {
     );
   }
 
-  // The code is 6 hex characters after "chewb-", about 16.7 million values,
-  // and nothing limited guesses (security review, 2026-10-09). Joining a chat
+  // The code was 6 hex characters, about 16.7 million values, with nothing
+  // limiting guesses (security review, 2026-10-09); it is now 20 random
+  // characters, so these caps are a second lock, not the only one. Joining a chat
   // is free, so a per-member cap alone is bypassed by joining again; the IP cap
   // is what binds. A server-wide cap was tried first and let one stranger lock
   // the whole team out for an hour (security review, same day).
@@ -350,7 +351,9 @@ export function registerTeam(app, { pool, chatMemberIn, HttpError }) {
   function checkCode(c, me, code) {
     const hour = Math.floor(Date.now() / 3_600_000);
     if (misses.size > 10_000) misses.clear();
-    const ip = (c.req.header("x-forwarded-for") || "").split(",")[0].trim() || "unknown";
+    // The rightmost entry is the one Railway's edge appended; anything to its
+    // left came from the client and can be made up per request.
+    const ip = (c.req.header("x-forwarded-for") || "").split(",").pop().trim() || "unknown";
     const byMember = bump(`m:${me.id}`, hour);
     const byIp = bump(`ip:${ip}`, hour);
     if (byMember.count >= MISSES_PER_MEMBER || byIp.count >= MISSES_PER_IP)
