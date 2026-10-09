@@ -155,6 +155,8 @@ struct RootView: View {
                                 DraftView(key: key).transition(.reveal(from: store.revealFrom)).zIndex(1)
                             case .card(let id):
                                 CardView(id: id).transition(.reveal(from: store.revealFrom)).zIndex(1)
+                            case .team:
+                                TeamView().transition(.reveal(from: store.revealFrom)).zIndex(1)
                             }
                         } else {
                             CompactView()
@@ -317,6 +319,8 @@ struct HomeView: View {
                     .scrollBounceBehavior(.basedOnSize)
                     .frame(maxHeight: 236)
                     .fixedSize(horizontal: false, vertical: true)
+                // The Chewbacca board, for a chat linked to it (Team.swift).
+                TeamEntry()
                 // Amber's own features, made for the group.
                 TogetherStrip()
                 HomeActivityTray(frames: $frames)
@@ -1086,7 +1090,7 @@ struct TalkBar: View {
             case .home: await store.homeSay(text)
             case .draft(let key): await store.say(key, text)
             case .tool(let slug): await store.say(slug, text, open: { store.host?.openInRealSafari($0) })
-            case .card: await store.homeSay(text)
+            case .card, .team: await store.homeSay(text)
             }
         }
     }
@@ -1377,7 +1381,7 @@ struct TopBar: View {
         switch store.route {
         case .tool(let slug): slug
         case .draft(let key): key
-        case .home, .card: nil
+        case .home, .card, .team: nil
         }
     }
 
@@ -1396,6 +1400,7 @@ struct TopBar: View {
         case .tool(let slug): return store.tool(slug)?.title ?? ""
         case .draft(let key): return store.drafts.first { $0.id == key }?.title ?? "New project"
         case .card(let id): return store.together.card(id)?.title ?? ""
+        case .team: return "Team board"
         }
     }
 
@@ -1758,6 +1763,8 @@ struct CompactView: View {
                 }
                 .buttonStyle(.plain)
                 .sharedSpot("new", in: titles)
+                // The team board, next to the one main action (Team.swift).
+                TeamPill()
                 ForEach(store.drafts) { draft in pill(draft.title) { open(.draft(draft.id)) }.sharedTitle("proj-\(draft.id)", in: titles) }
                 ForEach(tools) { tool in pill(tool.title) { open(.tool(tool.slug)) }.sharedTitle("proj-\(tool.slug)", in: titles) }
             }

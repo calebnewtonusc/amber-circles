@@ -296,3 +296,17 @@ create table if not exists card_entries (
   updated_at  timestamptz not null default now(),
   primary key (card_id, member_id)
 );
+
+-- The Chewbacca team board in a group chat (team.js). A chat sees the board
+-- only once someone in it links it with the team's code, and each member says
+-- once which teammate they are, so the board's activity log names a person.
+create table if not exists team_links (
+  circle_id   text primary key references circles(id) on delete cascade,
+  linked_by   text references members(id) on delete set null,
+  linked_at   timestamptz not null default now()
+);
+create table if not exists team_people (
+  member_id   text primary key references members(id) on delete cascade,
+  team_name   text not null,
+  updated_at  timestamptz not null default now()
+);

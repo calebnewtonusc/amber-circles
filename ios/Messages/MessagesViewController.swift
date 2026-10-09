@@ -12,7 +12,7 @@ final class MessagesViewController: MSMessagesAppViewController {
         // white boxes (Caleb's phone, build 41).
         overrideUserInterfaceStyle = .light
         store.host = self
-        let hosting = UIHostingController(rootView: RootView().environmentObject(store).environmentObject(store.together))
+        let hosting = UIHostingController(rootView: RootView().environmentObject(store).environmentObject(store.together).environmentObject(store.team))
         hosting.view.backgroundColor = .clear
         addChild(hosting)
         hosting.view.frame = view.bounds

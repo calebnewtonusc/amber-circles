@@ -18,6 +18,7 @@ import { build, catchUp, describeChange, explain, patch, talk, titleFrom } from 
 import { converse, extractMemories } from "./agent.js";
 import { verifyAppleToken } from "./apple.js";
 import { CARD_KINDS, CardError, cleanEntry, cleanSpec } from "./cards.js";
+import { registerTeam } from "./team.js";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const PORT = Number(process.env.PORT || 8787);
@@ -1730,6 +1731,9 @@ app.post("/api/cards/:id/close", async (c) => {
   await pool.query("update cards set closed_at = now() where id = $1", [card.id]);
   return c.json({ ok: true });
 });
+
+// The Chewbacca team board, for a chat linked to it (team.js).
+registerTeam(app, { pool, chatMemberIn, HttpError });
 
 // A new app is talked through before it exists. When it lands, the talk
 // that shaped it moves into it, so its conversation lives in the app.

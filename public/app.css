@@ -1577,3 +1577,81 @@ body.embedded .run-frame {
   inset: 0;
   height: 100%;
 }
+
+/* The team board on a Mac (teamPage in app.js). */
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+}
+.team-who {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-3);
+}
+.team-add {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: var(--space-3);
+  margin: var(--space-5) 0 var(--space-2);
+}
+@media (min-width: 700px) {
+  .team-add {
+    grid-template-columns: minmax(0, 1fr) auto auto auto;
+  }
+}
+.team-person {
+  margin-top: var(--space-6);
+}
+.team-person h2 {
+  font-size: 24px;
+  font-weight: 800;
+  margin: 0 0 var(--space-3);
+}
+.team-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  border: var(--rule);
+  background: var(--sheet);
+}
+.team-task {
+  display: grid;
+  grid-template-columns: 8.5rem minmax(0, 1fr);
+  gap: var(--space-3);
+  align-items: center;
+  padding: var(--space-3);
+}
+.team-task + .team-task {
+  border-top: var(--rule);
+}
+.team-status {
+  min-height: 44px;
+}
+.team-text {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  min-width: 0;
+}
+.team-title {
+  font-size: 18px;
+  font-weight: 700;
+  color: var(--ink);
+  overflow-wrap: anywhere;
+}
+.team-meta {
+  font-size: 15px;
+  color: var(--muted);
+}
+.team-meta a {
+  color: var(--ink);
+  font-weight: 700;
+}
+.team-late {
+  color: var(--danger);
+  font-weight: 700;
+}

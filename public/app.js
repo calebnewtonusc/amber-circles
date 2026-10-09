@@ -1043,6 +1043,9 @@ function chatPage(chatId) {
   const fragment = new URLSearchParams(location.hash.slice(1));
   const invite = fragment.get("i");
   const slug = fragment.get("t");
+  // A team-board bubble tapped in Messages on a Mac lands here: iMessage apps
+  // do not run on macOS, so the bubble's link opens in the browser instead.
+  const board = fragment.get("b") === "1";
   const key = `amber.chat.${chatId}`;
   if (invite) store.set(`${key}.invite`, invite);
   history.replaceState({}, "", `/c/${chatId}`);
@@ -1060,6 +1063,7 @@ function chatPage(chatId) {
       location.replace(`/t/${slug}#m=${encodeURIComponent(memberToken)}`);
       return;
     }
+    if (board) return teamPage(chatId, memberToken, frame);
     frame('<div class="skeleton h-320"></div>');
     try {
       const response = await fetch(`/api/chats/${chatId}`, { headers: { "x-amber-chat": memberToken } });
@@ -1084,6 +1088,11 @@ function chatPage(chatId) {
     frame(stateView({ glyph: "lock", title: "This link is missing its invite", body: "Ask someone in the chat to send it again from the Amber app." }));
     return;
   }
+  if (board) {
+    frame(`<div class="state"><h2>The team board</h2><p>Say your first name once and this browser opens the board for this chat.</p>
+    <form id="join" class="stack"><div class="field"><label for="join-name">Your first name</label><input class="input" id="join-name" name="name" required maxlength="80" autocomplete="given-name"></div>
+    <p class="error-text" id="join-error" role="alert"></p><button class="btn btn-primary btn-lg" type="submit">Open the board ${icon("arrow")}</button></form></div>`);
+  } else
   frame(`<div class="state"><h2>You're invited</h2><p>Someone in your chat made something with Amber. Say your name once, and you can open everything the chat makes.</p>
     <form id="join" class="stack"><div class="field"><label for="join-name">Your first name</label><input class="input" id="join-name" name="name" required maxlength="80" autocomplete="given-name"></div>
     <p class="error-text" id="join-error" role="alert"></p><button class="btn btn-primary btn-lg" type="submit">Open it ${icon("arrow")}</button></form></div>`);
@@ -1106,6 +1115,131 @@ function chatPage(chatId) {
       form.querySelector("button").disabled = false;
     }
   });
+}
+
+// ---------- the team board, for a Mac (ios/Messages/Team.swift on a phone) ----------
+
+const TEAM_STAGES = [["in_review", "Review"], ["in_progress", "Doing"], ["todo", "To do"], ["backlog", "Backlog"], ["done", "Done"]];
+
+async function teamPage(chatId, memberToken, frame) {
+  const api = async (path, init = {}) => {
+    const response = await fetch(`/api/chats/${chatId}/team${path}`, {
+      ...init,
+      headers: { "x-amber-chat": memberToken, "content-type": "application/json" },
+    });
+    const data = await response.json().catch(() => ({}));
+    if (!response.ok) throw new Error(data.error || "That did not work. Try again.");
+    return data;
+  };
+  let data;
+  try {
+    data = await api("");
+  } catch (error) {
+    frame(errorView(error));
+    bindRetry();
+    return;
+  }
+  if (!data.available) return frame(stateView({ title: "The team board is not switched on here" }));
+  if (!data.linked) {
+    frame(`<div class="state"><h2>Put the team board in this chat</h2><p>Ask Caleb for the team code.</p>
+      <form id="team-link" class="stack"><div class="field"><label for="team-code">Team code</label><input class="input" id="team-code" name="code" required autocomplete="off"></div>
+      <p class="error-text" id="team-error" role="alert"></p><button class="btn btn-primary btn-lg" type="submit">Link this chat</button></form></div>`);
+    return onSubmit("#team-link", async (form) => {
+      await api("/link", { method: "POST", body: JSON.stringify({ code: form.code.value }) });
+      teamPage(chatId, memberToken, frame);
+    });
+  }
+  if (!data.me) {
+    frame(`<div class="state"><h2>Which one are you?</h2><p>So your moves show up under your name.</p>
+      <div class="team-who">${data.members.map((m) => `<button class="btn btn-lg" data-me="${esc(m.name)}">${esc(m.name)}</button>`).join("")}</div>
+      <p class="error-text" id="team-error" role="alert"></p></div>`);
+    app.querySelectorAll("[data-me]").forEach((b) => b.addEventListener("click", async () => {
+      try {
+        await api("/me", { method: "POST", body: JSON.stringify({ name: b.dataset.me }) });
+        teamPage(chatId, memberToken, frame);
+      } catch (error) {
+        app.querySelector("#team-error").textContent = error.message;
+      }
+    }));
+    return;
+  }
+  const today = data.today;
+  const owners = [...data.members.map((m) => m.name), ""];
+  const row = (t) => {
+    const late = t.due && t.status !== "done" && t.due < today;
+    return `<li class="team-task">
+      <select class="input team-status" data-task="${esc(t.id)}" aria-label="Status of ${esc(t.id)}">
+        ${TEAM_STAGES.map(([v, l]) => `<option value="${v}"${v === t.status ? " selected" : ""}>${l}</option>`).join("")}
+      </select>
+      <div class="team-text"><span class="team-title">${esc(t.title)}</span>
+        <span class="team-meta">${esc(t.id)}${t.due ? ` · <span class="${late ? "team-late" : ""}">${late ? "Late, " : "Due "}${esc(t.due)}</span>` : ""}${/^https?:\/\//i.test(t.proof || "") ? ` · <a href="${esc(t.proof)}" rel="noopener" target="_blank">proof</a>` : ""}</span></div>
+    </li>`;
+  };
+  const sections = owners.map((name) => {
+    const mine = data.tasks
+      .filter((t) => t.owner === name && t.status !== "done" && (name || ["todo", "in_progress"].includes(t.status)))
+      .sort((a, b) => TEAM_STAGES.findIndex(([v]) => v === a.status) - TEAM_STAGES.findIndex(([v]) => v === b.status));
+    if (!name && !mine.length) return "";
+    return `<section class="team-person"><h2>${name ? esc(name) + (name === data.me ? " (you)" : "") : "Nobody's yet"}</h2>
+      ${mine.length ? `<ul class="team-list">${mine.map(row).join("")}</ul>` : '<p class="fine">Nothing assigned</p>'}</section>`;
+  }).join("");
+  const done = data.tasks.filter((t) => t.status === "done").sort((a, b) => (a.updated < b.updated ? 1 : -1));
+  frame(`<div class="masthead"><h1>Team board</h1><p class="lede">You're ${esc(data.me)}. Change a status and it's saved to the board right away.</p></div>
+    <form id="team-add" class="team-add"><label class="sr-only" for="team-title">New task</label>
+      <input class="input" id="team-title" name="title" required maxlength="200" placeholder="What needs doing">
+      <select class="input" name="owner" aria-label="Whose">${data.members.map((m) => `<option${m.name === data.me ? " selected" : ""}>${esc(m.name)}</option>`).join("")}</select>
+      <input class="input" type="date" name="due" aria-label="Due">
+      <button class="btn btn-primary" type="submit">Add</button></form>
+    <p class="error-text" id="team-error" role="alert"></p>
+    ${sections}
+    ${done.length ? `<section class="team-person"><h2>Shipped, last two weeks</h2><ul class="team-list">${done.map(row).join("")}</ul></section>` : ""}`);
+  onSubmit("#team-add", async (form) => {
+    const body = { title: form.title.value, owner: form.owner.value };
+    if (form.due.value) body.due = form.due.value;
+    await api("/tasks", { method: "POST", body: JSON.stringify(body) });
+    teamPage(chatId, memberToken, frame);
+  });
+  app.querySelectorAll(".team-status").forEach((select) => select.addEventListener("change", async () => {
+    const id = select.dataset.task;
+    const task = data.tasks.find((t) => t.id === id);
+    const body = { status: select.value };
+    if (select.value === "done" && !task.proof) {
+      const proof = window.prompt("Done needs proof: paste the link to the commit, video or page.");
+      if (!proof) { select.value = task.status; return; }
+      body.proof = proof.trim();
+    }
+    select.disabled = true;
+    try {
+      await api(`/tasks/${id}`, { method: "PATCH", body: JSON.stringify(body) });
+      teamPage(chatId, memberToken, frame);
+    } catch (error) {
+      select.value = task.status;
+      select.disabled = false;
+      fail(error);
+    }
+  }));
+
+  // Declarations, not consts: the link and name steps return before the board
+  // renders, and they still need both.
+  function fail(error) {
+    const line = app.querySelector("#team-error");
+    if (line) line.textContent = error.message;
+  }
+
+  function onSubmit(selector, work) {
+    app.querySelector(selector).addEventListener("submit", async (event) => {
+      event.preventDefault();
+      const form = event.currentTarget;
+      const button = form.querySelector("button");
+      if (button) button.disabled = true;
+      try {
+        await work(form);
+      } catch (error) {
+        fail(error);
+        if (button) button.disabled = false;
+      }
+    });
+  }
 }
 
 // ---------- make: the page Grandpa starts on ----------
