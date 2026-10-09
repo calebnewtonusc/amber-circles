@@ -252,13 +252,15 @@ final class TeamStore: ObservableObject {
         guard let chat, let host = chat.host, let conversation = host.activeConversation,
               let url = chat.link(for: nil, board: true) else { return }
         let name = me ?? chat.name
-        let said = unsaid.suffix(3)
+        // Newest first: the cover leads with the thing just done.
+        let said = Array(unsaid.reversed())
         let layout = MSMessageTemplateLayout()
-        layout.caption = said.isEmpty ? "Team board" : "\(name) \(said.first ?? "")"
-        layout.subcaption = said.count > 1 ? "and \(said.dropFirst().joined(separator: ", "))" : summary
+        layout.caption = said.first.map { "\(name) \($0)" } ?? "Team board"
+        layout.subcaption = said.count > 1 ? "and \(said.dropFirst().prefix(2).joined(separator: ", "))" : summary
         layout.trailingSubcaption = "Chewbacca"
-        let headline = said.isEmpty ? "This week" : "\(said.count + max(0, unsaid.count - 3)) \(unsaid.count == 1 ? "update" : "updates")"
-        layout.image = BubbleArt.render(title: headline, by: name, tagline: "Team board", action: "Open board")
+        // The cover shows the update itself, not a count (Caleb, 2026-10-09:
+        // "the cover should show what update you did").
+        layout.image = TeamCover.render(updates: said.map(TeamUpdate.init), by: name, summary: summary)
         // Its own session: reusing the open bubble's would fold this update
         // into a card's or a tool's bubble in the transcript.
         let message = MSMessage(session: MSSession())
@@ -271,5 +273,118 @@ final class TeamStore: ObservableObject {
             if let problem { Task { @MainActor in self?.error = problem.localizedDescription } }
         }
         host.requestPresentationStyle(.compact)
+    }
+}
+
+/// One line of "what I did", split so the cover can set the task in type:
+/// "finished CHW-12 Ship the reply agent" is verb "finished", id "CHW-12",
+/// rest "Ship the reply agent".
+struct TeamUpdate {
+    let verb: String
+    let id: String
+    let rest: String
+
+    init(_ line: String) {
+        if let r = line.range(of: #"CHW-\d+"#, options: .regularExpression) {
+            verb = line[..<r.lowerBound].trimmingCharacters(in: .whitespaces)
+            id = String(line[r])
+            rest = line[r.upperBound...].trimmingCharacters(in: .whitespaces)
+        } else {
+            verb = line; id = ""; rest = ""
+        }
+    }
+
+    var stage: TeamStage? {
+        if verb.hasPrefix("finished") { return .done }
+        if verb.hasPrefix("started") { return .in_progress }
+        if verb.hasPrefix("sent for review") { return .in_review }
+        if verb.hasPrefix("added") || verb.hasPrefix("queued") { return .todo }
+        return nil
+    }
+
+    /// The task's name, or the whole change when the line names no task.
+    var headline: String { rest.isEmpty ? (id.isEmpty ? verb : "\(verb) \(id)") : rest }
+}
+
+/// The picture on a team bubble: who did what, with the task's own name as
+/// the big line, so the chat reads the update without opening anything.
+enum TeamCover {
+    @MainActor
+    static func render(updates: [TeamUpdate], by name: String, summary: String) -> UIImage? {
+        let lead = updates.first
+        let more = Array(updates.dropFirst().prefix(2))
+        let extra = max(0, updates.count - 3)
+        let card = VStack(alignment: .leading, spacing: 14) {
+            HStack(spacing: 10) {
+                Image("AmberLogo").resizable().scaledToFit().frame(height: 30)
+                Text("Team board").font(Amber.font(26, .bold)).foregroundStyle(Amber.muted)
+                Spacer()
+                if let id = lead?.id, !id.isEmpty {
+                    Text(id).font(Amber.font(24, .bold)).foregroundStyle(Amber.muted).monospacedDigit()
+                }
+            }
+            if let lead {
+                HStack(spacing: 10) {
+                    stageMark(lead.stage)
+                    Text("\(name) \(lead.verb)").font(Amber.font(28, .bold)).foregroundStyle(color(lead.stage))
+                }
+                Text(lead.headline).font(Amber.font(46, .heavy)).tracking(-1.2).foregroundStyle(Amber.ink)
+                    .lineLimit(2).minimumScaleFactor(0.6)
+            } else {
+                Text("This week").font(Amber.font(56, .heavy)).tracking(-1.6).foregroundStyle(Amber.ink)
+                Text(summary).font(Amber.font(28)).foregroundStyle(Amber.body).lineLimit(1)
+            }
+            Spacer(minLength: 0)
+            ForEach(Array(more.enumerated()), id: \.offset) { _, u in
+                HStack(spacing: 8) {
+                    stageMark(u.stage).scaleEffect(0.8)
+                    Text("\(u.verb) \(u.headline)").font(Amber.font(22)).foregroundStyle(Amber.body).lineLimit(1)
+                }
+            }
+            HStack {
+                Text(extra > 0 ? "+\(extra) more" : "By \(name)").font(Amber.font(22)).foregroundStyle(Amber.muted)
+                Spacer()
+                Text("Open board").font(Amber.font(24, .bold)).foregroundStyle(.white)
+                    .padding(.horizontal, 26).padding(.vertical, 12)
+                    .background(Capsule().fill(Amber.ink))
+            }
+        }
+        .padding(36)
+        .frame(width: 600, height: 400, alignment: .topLeading)
+        .background(Color.white)
+        let renderer = ImageRenderer(content: card)
+        renderer.scale = 2
+        return renderer.uiImage
+    }
+
+    private static func color(_ stage: TeamStage?) -> Color {
+        switch stage {
+        case .done: return Amber.ink
+        case .in_progress: return Amber.bubble
+        case .in_review: return Amber.link
+        default: return Amber.body
+        }
+    }
+
+    /// The same marks as the status dot on the board, so the cover and the
+    /// row read as one thing.
+    @ViewBuilder private static func stageMark(_ stage: TeamStage?) -> some View {
+        Group {
+            switch stage {
+            case .done:
+                Circle().fill(Amber.ink).overlay(Image(systemName: "checkmark").font(.system(size: 15, weight: .heavy)).foregroundStyle(.white))
+            case .in_progress:
+                Circle().strokeBorder(Amber.amber, lineWidth: 3)
+                    .overlay(Circle().trim(from: 0, to: 0.5).fill(Amber.amber).rotationEffect(.degrees(-90)).padding(6))
+            case .in_review:
+                Circle().strokeBorder(Amber.link, lineWidth: 3)
+                    .overlay(Circle().trim(from: 0, to: 0.75).fill(Amber.link).rotationEffect(.degrees(-90)).padding(6))
+            case .todo:
+                Circle().strokeBorder(Amber.muted, lineWidth: 3).overlay(Image(systemName: "plus").font(.system(size: 14, weight: .heavy)).foregroundStyle(Amber.muted))
+            default:
+                Circle().fill(Amber.wash)
+            }
+        }
+        .frame(width: 30, height: 30)
     }
 }
