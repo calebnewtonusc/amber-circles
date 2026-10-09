@@ -12,6 +12,7 @@
 import { readFile, readdir, writeFile, mkdir } from "node:fs/promises";
 import { createHash, timingSafeEqual } from "node:crypto";
 import path from "node:path";
+import { check, gather, headline } from "./team-check.js";
 import {
   ID_PATTERN,
   PRIORITIES,
@@ -151,7 +152,8 @@ const MEMBERS_TTL_MS = 60_000;
 let membersCache = { at: 0, list: null };
 
 async function readMembers() {
-  if (membersCache.list && Date.now() - membersCache.at < MEMBERS_TTL_MS) return membersCache.list;
+  if (membersCache.list && Date.now() - membersCache.at < MEMBERS_TTL_MS)
+    return membersCache.list;
   const list = await readMembersFresh();
   if (list.length) membersCache = { at: Date.now(), list };
   return list;
@@ -353,13 +355,23 @@ export function registerTeam(app, { pool, chatMemberIn, HttpError }) {
     if (misses.size > 10_000) misses.clear();
     // The rightmost entry is the one Railway's edge appended; anything to its
     // left came from the client and can be made up per request.
-    const ip = (c.req.header("x-forwarded-for") || "").split(",").pop().trim() || "unknown";
+    const ip =
+      (c.req.header("x-forwarded-for") || "").split(",").pop().trim() ||
+      "unknown";
     const byMember = bump(`m:${me.id}`, hour);
     const byIp = bump(`ip:${ip}`, hour);
     if (byMember.count >= MISSES_PER_MEMBER || byIp.count >= MISSES_PER_IP)
       bad(429, "Too many wrong codes. Try again in an hour.");
-    const given = createHash("sha256").update(String(code ?? "").trim().toLowerCase()).digest();
-    const wanted = createHash("sha256").update(process.env.TEAM_LINK_CODE.trim().toLowerCase()).digest();
+    const given = createHash("sha256")
+      .update(
+        String(code ?? "")
+          .trim()
+          .toLowerCase(),
+      )
+      .digest();
+    const wanted = createHash("sha256")
+      .update(process.env.TEAM_LINK_CODE.trim().toLowerCase())
+      .digest();
     if (!timingSafeEqual(given, wanted)) {
       byMember.miss();
       byIp.miss();
@@ -446,14 +458,20 @@ export function registerTeam(app, { pool, chatMemberIn, HttpError }) {
       [me.circleId],
     );
     const mine = held.find((r) => r.member_id === me.id);
-    const takenByOther = held.some((r) => r.team_name === name && r.member_id !== me.id);
+    const takenByOther = held.some(
+      (r) => r.team_name === name && r.member_id !== me.id,
+    );
     if (mine && mine.team_name !== name && takenByOther)
       bad(409, `${name} is already someone else in this chat.`);
     // Anyone holding a forwarded bubble can join the chat, so a name someone
     // here already holds (your phone, now your Mac) takes the team code too
     // (security review, 2026-10-09).
     if (!mine && takenByOther) {
-      if (body.code === undefined) bad(409, `${name} is already in this chat. Enter the team code to be ${name} here too.`);
+      if (body.code === undefined)
+        bad(
+          409,
+          `${name} is already in this chat. Enter the team code to be ${name} here too.`,
+        );
       checkCode(c, me, body.code);
     }
     await pool.query(
@@ -537,5 +555,68 @@ export function registerTeam(app, { pool, chatMemberIn, HttpError }) {
     if (missing) bad(404, `There is no ${id} on the board.`);
     if (conflict) bad(409, "Someone else is editing this task. Try again.");
     return c.json({ task: forPhone(task) });
+  });
+
+  // A few words for the bubble's cover in place of the task number.
+  app.post("/api/chats/:id/team/headline", async (c) => {
+    await writer(c);
+    const body = await c.req.json().catch(() => ({}));
+    const updates = (Array.isArray(body.updates) ? body.updates : [])
+      .filter((u) => typeof u === "string")
+      .slice(0, 6)
+      .map((u) => oneLine(u).slice(0, 300))
+      .filter(Boolean);
+    if (!updates.length) bad(400, "Nothing to sum up.");
+    try {
+      return c.json({ headline: await headline(updates) });
+    } catch (error) {
+      console.error(`team headline: ${error.message}`);
+      return c.json({ headline: null });
+    }
+  });
+
+  // Did the change actually land? Reads the commits and proof the task points
+  // at and asks Claude. A check reads up to 8 commits and costs a Sonnet call,
+  // so one per task per minute.
+  const lastCheck = new Map();
+  app.post("/api/chats/:id/team/tasks/:task/check", async (c) => {
+    const { teamName } = await writer(c);
+    const id = c.req.param("task");
+    if (!ID_PATTERN.test(id)) bad(400, "That is not a task id.");
+    if (Date.now() - (lastCheck.get(id) || 0) < 60_000)
+      bad(429, "Checked a moment ago. Give it a minute.");
+    lastCheck.set(id, Date.now());
+    const task = (await listTasks({ fresh: true })).find((t) => t.id === id);
+    if (!task) bad(404, `There is no ${id} on the board.`);
+    let result;
+    try {
+      const evidence = local() ? [] : await gather(gh, REPO, BRANCH, task);
+      result = await check(task, evidence);
+    } catch (error) {
+      console.error(`team check ${id}: ${error.message}`);
+      lastCheck.delete(id);
+      bad(502, "The check didn't finish. Try again in a minute.");
+    }
+    const label = {
+      shipped: "shipped",
+      partly: "partly there",
+      not_yet: "not in the code yet",
+      cant_tell: "can't tell from the code",
+    }[result.verdict];
+    // Written to the task, so the web board and the CLI see the same answer.
+    await writeTask(
+      id,
+      `team: ${id} comment (Amber check for ${teamName})`,
+      (t) => {
+        t.activity.push(
+          `${today()} Amber check: ${label}. ${result.reason}`.slice(0, 600),
+        );
+        t.updated = today();
+        return t;
+      },
+    ).catch((error) =>
+      console.error(`team check ${id} note: ${error.message}`),
+    );
+    return c.json(result);
   });
 }

@@ -392,3 +392,12 @@ test("wrong codes stop after ten in an hour", { skip }, async () => {
   const right = await call(`/api/chats/${caleb.chat}/team/link`, { method: "POST", chat: caleb.token, body: { code: CODE } });
   assert.equal(right.status, 429, "even the right code waits out the hour");
 });
+
+test("the code check and the headline need a teammate name first", { skip }, async () => {
+  const { caleb } = await chat();
+  await call(`/api/chats/${caleb.chat}/team/link`, { method: "POST", chat: caleb.token, body: { code: CODE } });
+  const check = await call(`/api/chats/${caleb.chat}/team/tasks/CHW-1/check`, { method: "POST", chat: caleb.token, body: {} });
+  assert.equal(check.status, 403);
+  const head = await call(`/api/chats/${caleb.chat}/team/headline`, { method: "POST", chat: caleb.token, body: { updates: ["finished CHW-1 x"] } });
+  assert.equal(head.status, 403);
+});

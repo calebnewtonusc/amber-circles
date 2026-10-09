@@ -133,6 +133,8 @@ final class TeamStore: ObservableObject {
     @Published var editing: TeamTask?
     @Published var adding = false
     @Published var proofFor: TeamTask?
+    /// What the code check said, by task id, for this session.
+    @Published var checks: [String: TeamCheck] = [:]
     weak var chat: ChatStore?
 
     private var token: String? { chat?.session?.token }
@@ -213,10 +215,27 @@ final class TeamStore: ObservableObject {
             self.upsert(fresh.task)
             if self.editing?.id == fresh.task.id { self.editing = fresh.task }
             if let said { self.unsaid.append(said) }
+            // Marking done runs the code check, so the bubble can say whether
+            // the change is really in the code.
+            if fresh.task.stage == .done && t.stage != .done { Task { await self.check(fresh.task) } }
         }
     }
 
     /// The dot's one tap: forward one stage. Into done it asks for proof first.
+    /// Asks the server to read the task's commits and proof and say whether
+    /// the change actually landed.
+    @discardableResult
+    func check(_ t: TeamTask) async -> TeamCheck? {
+        guard let token, let chatId else { return nil }
+        var result: TeamCheck?
+        _ = await run("check-\(t.id)") {
+            let r: TeamCheck = try await API.call("api/chats/\(chatId)/team/tasks/\(t.id)/check", method: "POST", body: [:], chat: token)
+            self.checks[t.id] = r
+            result = r
+        }
+        return result
+    }
+
     func advance(_ t: TeamTask) {
         guard let next = t.stage.next else { return }
         if next == .done && t.proof.isEmpty { proofFor = t; return }
@@ -248,10 +267,20 @@ final class TeamStore: ObservableObject {
 
     /// Puts one bubble in the message box: what you changed, or where the
     /// board stands. It is only sent when the person taps send.
-    func tell() {
+    func tell() async {
         guard let chat, let host = chat.host, let conversation = host.activeConversation,
               let url = chat.link(for: nil, board: true) else { return }
         let name = me ?? chat.name
+        // A few words from Claude in place of the task number, which means
+        // nothing to the chat (Caleb, 2026-10-09). The task's own name if it fails.
+        var title: String?
+        if !unsaid.isEmpty, let token, let chatId {
+            struct Headline: Decodable { let headline: String? }
+            working.insert("tell")
+            title = (try? await API.call("api/chats/\(chatId)/team/headline", method: "POST",
+                                         body: ["updates": Array(unsaid.suffix(6))], chat: token) as Headline)?.headline
+            working.remove("tell")
+        }
         // Newest first: the cover leads with the thing just done.
         let said = Array(unsaid.reversed())
         let layout = MSMessageTemplateLayout()
@@ -260,7 +289,9 @@ final class TeamStore: ObservableObject {
         layout.trailingSubcaption = "Chewbacca"
         // The cover shows the update itself, not a count (Caleb, 2026-10-09:
         // "the cover should show what update you did").
-        layout.image = TeamCover.render(updates: said.map(TeamUpdate.init), by: name, summary: summary)
+        let updates = said.map(TeamUpdate.init)
+        layout.image = TeamCover.render(updates: updates, title: title, check: updates.first.flatMap { checks[$0.id] },
+                                        by: name, summary: summary)
         // Its own session: reusing the open bubble's would fold this update
         // into a card's or a tool's bubble in the transcript.
         let message = MSMessage(session: MSSession())
@@ -310,7 +341,7 @@ struct TeamUpdate {
 /// the big line, so the chat reads the update without opening anything.
 enum TeamCover {
     @MainActor
-    static func render(updates: [TeamUpdate], by name: String, summary: String) -> UIImage? {
+    static func render(updates: [TeamUpdate], title: String?, check: TeamCheck?, by name: String, summary: String) -> UIImage? {
         let lead = updates.first
         let more = Array(updates.dropFirst().prefix(2))
         let extra = max(0, updates.count - 3)
@@ -319,16 +350,19 @@ enum TeamCover {
                 Image("AmberLogo").resizable().scaledToFit().frame(height: 30)
                 Text("Team board").font(Amber.font(26, .bold)).foregroundStyle(Amber.muted)
                 Spacer()
-                if let id = lead?.id, !id.isEmpty {
-                    Text(id).font(Amber.font(24, .bold)).foregroundStyle(Amber.muted).monospacedDigit()
+                if let check {
+                    Label(check.short, systemImage: check.symbol)
+                        .font(Amber.font(22, .bold)).foregroundStyle(check.color)
+                        .padding(.horizontal, 14).padding(.vertical, 6)
+                        .background(Capsule().fill(check.color.opacity(0.12)))
                 }
             }
             if let lead {
                 HStack(spacing: 10) {
                     stageMark(lead.stage)
-                    Text("\(name) \(lead.verb)").font(Amber.font(28, .bold)).foregroundStyle(color(lead.stage))
+                    Text(title == nil ? "\(name) \(lead.verb)" : name).font(Amber.font(28, .bold)).foregroundStyle(color(lead.stage))
                 }
-                Text(lead.headline).font(Amber.font(46, .heavy)).tracking(-1.2).foregroundStyle(Amber.ink)
+                Text(title ?? lead.headline).font(Amber.font(46, .heavy)).tracking(-1.2).foregroundStyle(Amber.ink)
                     .lineLimit(2).minimumScaleFactor(0.6)
             } else {
                 Text("This week").font(Amber.font(56, .heavy)).tracking(-1.6).foregroundStyle(Amber.ink)
@@ -386,5 +420,42 @@ enum TeamCover {
             }
         }
         .frame(width: 30, height: 30)
+    }
+}
+
+
+/// What the code check said about one task (team-check.js on the server).
+struct TeamCheck: Decodable, Equatable {
+    struct Source: Decodable, Equatable { let label: String; let url: String? }
+    let verdict: String
+    let reason: String
+    let evidence: [Source]
+    let read: Int
+
+    var short: String {
+        switch verdict {
+        case "shipped": return "In the code"
+        case "partly": return "Partly in"
+        case "not_yet": return "Not in the code"
+        default: return "Can't tell"
+        }
+    }
+
+    var symbol: String {
+        switch verdict {
+        case "shipped": return "checkmark.seal.fill"
+        case "partly": return "circle.lefthalf.filled"
+        case "not_yet": return "xmark.circle"
+        default: return "questionmark.circle"
+        }
+    }
+
+    var color: Color {
+        switch verdict {
+        case "shipped": return Color(red: 29 / 255, green: 107 / 255, blue: 63 / 255)
+        case "partly": return Amber.bubble
+        case "not_yet": return Amber.danger
+        default: return Amber.muted
+        }
     }
 }

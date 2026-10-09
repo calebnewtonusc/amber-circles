@@ -221,9 +221,9 @@ struct TeamView: View {
     }
 
     private var tellBar: some View {
-        Button { team.tell() } label: {
+        Button { Task { await team.tell() } } label: {
             HStack(spacing: 10) {
-                Image(systemName: "arrow.up.message.fill")
+                if team.working.contains("tell") { ProgressView().tint(.white) } else { Image(systemName: "arrow.up.message.fill") }
                 Text("Tell the chat, \(team.unsaid.count) \(team.unsaid.count == 1 ? "update" : "updates")").lineLimit(1)
             }
         }
@@ -509,6 +509,30 @@ struct TaskSheet: View {
                                 Button("Post") { Task { if await team.update(t, ["comment": comment]) { comment = "" } } }
                                     .buttonStyle(BlockButton(primary: true)).disabled(comment.trimmingCharacters(in: .whitespaces).isEmpty)
                             }
+                        }
+                        section("In the code?") {
+                            if let r = team.checks[t.id] {
+                                VStack(alignment: .leading, spacing: 6) {
+                                    Label(r.short, systemImage: r.symbol).font(Amber.font(16, .bold)).foregroundStyle(r.color)
+                                    Text(r.reason).font(Amber.font(15)).foregroundStyle(Amber.body)
+                                    ForEach(r.evidence, id: \.label) { e in
+                                        if let s = e.url, let url = URL(string: s), url.scheme == "https" {
+                                            Link(destination: url) { Text(e.label).font(Amber.font(14)).foregroundStyle(Amber.link).lineLimit(1) }
+                                        } else {
+                                            Text(e.label).font(Amber.font(14)).foregroundStyle(Amber.muted)
+                                        }
+                                    }
+                                }
+                                .padding(14).frame(maxWidth: .infinity, alignment: .leading).block()
+                            }
+                            Button { Task { await team.check(t) } } label: {
+                                HStack {
+                                    if team.working.contains("check-\(t.id)") { ProgressView() }
+                                    Text(team.working.contains("check-\(t.id)") ? "Reading the commits" : (team.checks[t.id] == nil ? "Check it's really in the code" : "Check again"))
+                                }
+                            }
+                            .buttonStyle(BlockButton(full: true))
+                            .disabled(team.working.contains("check-\(t.id)"))
                         }
                         if !t.activity.isEmpty {
                             section("Activity") {
